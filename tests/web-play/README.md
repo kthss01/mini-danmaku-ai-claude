@@ -7,7 +7,7 @@
 | 경로 | 역할 |
 | --- | --- |
 | `EVIDENCE_TEMPLATE.md` | 검증 1회분 기록 양식. 복사해서 `evidence/` 아래에 작성 |
-| `evidence/` | 실제 검증 기록. 파일 이름은 `YYYY-MM-DD-<브라우저>-<메인 커밋 7자리>.md` |
+| `evidence/` | 실제 검증 기록. 파일 이름은 `YYYY-MM-DD-<브라우저>-<메인 커밋 7자리>.md`. 공식 판정은 `2026-10-24-chrome-official-fd6f865.md`, 나머지 `explore` 기록은 기존 산출물로 한 탐색 기록 |
 | `collect-env.ps1` | OS·브라우저·커밋·도구 버전과 작업 트리 상태, 산출물 해시를 수집하는 읽기 전용 스크립트 |
 
 ## 규칙
@@ -27,4 +27,11 @@
 .\tests\web-play\collect-env.ps1 -SiteDirectory build\web\site
 ```
 
-두 번째 형태는 서빙 루트의 `taisei.html`/`taisei.js`/`taisei.wasm` 수정 시각과 SHA-256, manifest 유무를 함께 출력한다.
+두 번째 형태는 서빙 루트의 셸·게임 파일 SHA-256, 파일 수정 시각(빌드 시각 아님), `build-info.json` 요약(실제 빌드 커밋·시각·도구·미커밋)을 함께 출력한다. 루트 셸 + `game/` 배치와 평면 배치를 모두 인식한다.
+
+검증 대상 저장소는 현재 위치가 속한 Git 저장소다. 다른 clone에 있는 이 스크립트로 QA clone을 기록할 때는 QA clone에서 실행하거나 `-RepositoryRoot <경로>`를 준다.
+
+```powershell
+Set-Location <QA clone>
+& <이 스크립트 경로> -SiteDirectory build\web\site
+```

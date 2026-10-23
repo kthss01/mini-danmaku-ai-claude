@@ -1,7 +1,10 @@
 ﻿[CmdletBinding()]
 param(
     # 서빙 루트(예: build\web\site). 지정하면 산출물의 수정 시각·SHA-256·manifest 유무를 함께 출력한다.
-    [string]$SiteDirectory
+    [string]$SiteDirectory,
+    # 검증 대상 저장소 루트. 생략하면 현재 위치가 속한 Git 저장소, 그것도 아니면 이 스크립트가 있는 저장소를 쓴다.
+    # 다른 clone에 있는 이 스크립트로 QA clone을 기록할 때 대상이 뒤바뀌지 않도록 한다.
+    [string]$RepositoryRoot
 )
 
 # 웹 플레이 검증 기록(EVIDENCE_TEMPLATE.md)을 채우기 위한 정보를 Markdown으로 출력한다.
@@ -9,7 +12,16 @@ param(
 # 읽기 전용이며 어떤 파일도 수정하지 않는다.
 
 $ErrorActionPreference = 'Continue'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+if ($RepositoryRoot) {
+    $repoRoot = (Resolve-Path $RepositoryRoot).Path
+} else {
+    $cwdRepo = (git -C (Get-Location).Path rev-parse --show-toplevel 2>$null)
+    if ($cwdRepo) {
+        $repoRoot = (Resolve-Path $cwdRepo).Path
+    } else {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    }
+}
 
 function Get-CommandVersion {
     param([string]$Name, [string[]]$Arguments)
@@ -134,7 +146,40 @@ if ($SiteDirectory) {
         } | Select-Object -First 1
         if ($manifest) {
             $site['manifest'] = $manifest.FullName.Substring($sitePath.Length).TrimStart('\')
-            $site['manifest 내용'] = ((Get-Content -LiteralPath $manifest.FullName -Raw -ErrorAction SilentlyContinue) -replace '\s+', ' ').Trim()
+            $raw = Get-Content -LiteralPath $manifest.FullName -Raw -ErrorAction SilentlyContinue
+            $json = $null
+            if ($manifest.Extension -eq '.json') {
+                try { $json = $raw | ConvertFrom-Json } catch { $json = $null }
+            }
+            if ($json -and $json.build) {
+                # 세션 1 build-info.json: 출처(build)와 패키징(packaging)을 나눠 핵심 값만 적는다. 전체는 파일 자체를 본다.
+                $site['build.taiseiCommit'] = $json.build.taiseiCommit
+                $site['build.repositoryCommit'] = $json.build.repositoryCommit
+                $site['build 시각(UTC, 실제 빌드 시각)'] = "$($json.build.buildStartedAtUtc) ~ $($json.build.buildFinishedAtUtc)"
+                $site['build 도구'] = "emsdk $($json.build.emscriptenVersion), $($json.build.buildImage)"
+                # 값이 없거나 빈 배열이면 '없음'. @($null).Count가 1이 되므로 빈 값을 먼저 걸러낸다.
+                $mainDirty = @($json.build.repositoryDirtyEntries | Where-Object { $_ })
+                # 세션 1 스키마의 필드 이름은 taiseiWorktreeDirtyEntries. 이전 이름도 함께 읽는다.
+                $taiseiDirty = @(@($json.build.taiseiWorktreeDirtyEntries) + @($json.build.taiseiDirtyEntries) | Where-Object { $_ })
+                # 목록이 길면 개수와 앞 3개만 적는다. 전체 목록은 build-info.json에 있다.
+                $summarize = {
+                    param($items)
+                    if (-not $items.Count) { return '없음' }
+                    $head = ($items | Select-Object -First 3 | ForEach-Object { "$_".Trim() }) -join '; '
+                    if ($items.Count -gt 5) { return "$($items.Count)개 (예: $head …)" }
+                    return (($items | ForEach-Object { "$_".Trim() }) -join '; ')
+                }
+                $site['build 미커밋(메인)'] = & $summarize $mainDirty
+                $site['build 미커밋(Taisei)'] = & $summarize $taiseiDirty
+                if ($json.packaging) {
+                    $site['packaging'] = "$($json.packaging.mode), 메인 $($json.packaging.repositoryCommit)"
+                }
+                if ($json.site) { $site['site.entry'] = $json.site.entry }
+            } else {
+                # 알 수 없는 형식은 앞부분만 적는다(대용량 manifest가 기록을 덮지 않도록).
+                $flat = ($raw -replace '\s+', ' ').Trim()
+                $site['manifest 내용(앞 300자)'] = if ($flat.Length -gt 300) { $flat.Substring(0, 300) + ' …' } else { $flat }
+            }
         } else {
             $site['manifest'] = '없음 → 빌드 시각·출처 미확인 (빌드 로그로만 확인 가능)'
         }
