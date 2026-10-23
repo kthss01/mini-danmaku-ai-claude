@@ -16,6 +16,8 @@
   대소문자가 다른 참조(Windows 에서는 열리지만 Linux 서버·공개 호스팅에서는 404)도 오류로 잡는다.
 - "/..." 절대 경로 참조는 하위 경로 배포를 깨뜨리므로 오류로 보고한다.
 - JS 문자열에서 .wasm/.data 참조를 찾아 스크립트 기준 상대 경로로 존재를 확인한다.
+- JS 문자열의 .js 참조(셸이 script 요소로 주입하는 로더)는 그 JS 를 실행하는 HTML 문서 기준으로 풀어 따라간다.
+  <meta http-equiv="refresh"> 이동 대상도 따라간다. --require-wasm 이면 .wasm 에 도달하지 못할 때 오류로 처리한다.
 - .wasm 은 매직 넘버·버전을 확인하고, 공유 메모리(pthreads) 사용 여부로 격리 헤더 필요성을 판정한다.
 - Taisei 리소스 디렉터리(기본 data/) 는 파일 이름이 SHA-256 인지, --verify-hashes 면 내용과 일치하는지 확인한다.
 - --url 이 있으면 각 리소스를 실제로 요청해 200 응답, Content-Type, Content-Length, 404 동작,
@@ -82,6 +84,10 @@ HTML_REF_ATTRS = {
 
 CSS_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)")
 JS_ASSET_RE = re.compile(r"""['"]([A-Za-z0-9_./-]+\.(?:wasm|data|mjs))['"]""")
+# 셸이 document.createElement('script') 로 넣는 로더 이름(예: shell-config.js 의 'taisei.js').
+# 이런 스크립트 src 는 JS 파일이 아니라 그 JS 를 실행하는 HTML 문서 기준으로 해석된다.
+JS_SCRIPT_RE = re.compile(r"""['"`]([A-Za-z0-9_./-]+\.js)['"`]""")
+META_REFRESH_URL_RE = re.compile(r"""url\s*=\s*['"]?([^'";]+)""", re.IGNORECASE)
 SHA256_NAME_RE = re.compile(r"^[0-9a-f]{64}$")
 THREAD_MARKERS = ("SharedArrayBuffer", "PThread", "Atomics.wait")
 
@@ -189,6 +195,11 @@ class RefCollector(HTMLParser):
                         self.refs.append((tag, attr, url))
             else:
                 self.refs.append((tag, attr, value))
+        if tag == "meta" and attrs_dict.get("http-equiv", "").lower() == "refresh":
+            # <meta http-equiv="refresh" content="0; url=game/index.html"> 도 이동 경로로 따라간다.
+            match = META_REFRESH_URL_RE.search(attrs_dict.get("content", ""))
+            if match and match.group(1).strip():
+                self.refs.append(("meta", "refresh", match.group(1).strip()))
         style = attrs_dict.get("style")
         if style:
             self.inline_css.append(style)
@@ -300,7 +311,8 @@ def resolve_reference(base_rel: str, value: str) -> tuple[str, bool]:
     return posixpath.normpath(joined), absolute
 
 
-def scan_static(report: Report, root: Path, entry: str, data_dir_name: str, verify_hashes: bool) -> None:
+def scan_static(report: Report, root: Path, entry: str, data_dir_name: str, verify_hashes: bool,
+                require_wasm: bool = False) -> None:
     queue: list[str] = [entry]
     seen_html: set[str] = set()
     seen_resources: set[str] = set()
@@ -349,6 +361,7 @@ def scan_static(report: Report, root: Path, entry: str, data_dir_name: str, veri
         if markers:
             report.threads_required = True
             report.info("threads-markers", f"스레드 관련 식별자 발견: {', '.join(markers)}", js_rel)
+        host_html = html_rel_for_js.get(js_rel, entry)
         for match in JS_ASSET_RE.finditer(text):
             value = match.group(1)
             if value.startswith(("http:", "https:")):
@@ -356,7 +369,16 @@ def scan_static(report: Report, root: Path, entry: str, data_dir_name: str, veri
             # Emscripten locateFile 은 스크립트 URL 기준으로 상대 경로를 푼다.
             rel = register(js_rel, value, "JS 문자열")
             if rel and rel.endswith(".wasm"):
-                wasm_hosts.setdefault(rel, html_rel_for_js.get(js_rel, entry))
+                wasm_hosts.setdefault(rel, host_html)
+        for match in JS_SCRIPT_RE.finditer(text):
+            value = match.group(1)
+            if value.startswith(("http:", "https:")):
+                continue
+            # 동적으로 주입하는 스크립트는 문서 URL 기준으로 풀린다. 문서(host_html) 기준으로 확인하고 따라간다.
+            rel = register(host_html, value, f"JS 동적 스크립트 ({js_rel})")
+            if rel and not (root / rel).is_dir():
+                html_rel_for_js.setdefault(rel, host_html)
+                scan_js(rel)
 
     html_rel_for_js: dict[str, str] = {}
 
@@ -380,7 +402,7 @@ def scan_static(report: Report, root: Path, entry: str, data_dir_name: str, veri
             lower = rel.lower()
             if (root / rel).is_dir():
                 continue
-            if lower.endswith((".html", ".htm")) and tag in ("a", "iframe", "link"):
+            if lower.endswith((".html", ".htm")) and tag in ("a", "iframe", "link", "meta"):
                 queue.append(rel)
             elif lower.endswith((".js", ".mjs")):
                 html_rel_for_js.setdefault(rel, html_rel)
@@ -453,7 +475,11 @@ def scan_static(report: Report, root: Path, entry: str, data_dir_name: str, veri
         report.info("data-dir", f"리소스 {len(files)}개, {total / (1024 * 1024):.1f} MiB{verified}", data_rel)
 
     if not wasm_hosts:
-        report.warning("no-wasm", "진입 페이지에서 도달할 수 있는 .wasm 참조가 없습니다. 진입 파일(--entry) 이 맞는지 확인하세요.", entry)
+        message = "진입 페이지에서 도달할 수 있는 .wasm 참조가 없습니다. 진입 파일(--entry) 이 맞는지 확인하세요."
+        if require_wasm:
+            report.error("no-wasm", message + " (--require-wasm)", entry)
+        else:
+            report.warning("no-wasm", message, entry)
 
     report.isolation_required = report.threads_required
 
@@ -682,6 +708,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="HTTP 검사에서 요청할 리소스 파일 수 (기본: 3, -1 이면 전체)")
     parser.add_argument("--require-isolation", choices=("auto", "yes", "no"), default="auto",
                         help="COOP/COEP 요구 여부. auto 는 스레드 사용이 감지될 때만 요구 (기본: auto)")
+    parser.add_argument("--require-wasm", action="store_true",
+                        help="진입 페이지에서 .wasm 에 도달하지 못하면 경고 대신 오류로 처리(게임 산출물 검증용)")
     parser.add_argument("--json", help="결과를 JSON 파일로 저장")
     return parser
 
@@ -698,7 +726,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
 
     report = Report(root=str(root), entry=entry, url=args.url)
-    scan_static(report, root, entry, args.data_dir, args.verify_hashes)
+    scan_static(report, root, entry, args.data_dir, args.verify_hashes, require_wasm=args.require_wasm)
     if args.url:
         scan_live(report, root, args.url, entry, args.require_isolation, args.sample_data, args.verify_hashes)
 

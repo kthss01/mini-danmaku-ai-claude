@@ -1,7 +1,7 @@
 # 웹 산출물 로컬 HTTP 제공과 리소스 검사
 
 담당: 세션 4 ([이슈 #7](https://github.com/kthss01/mini-danmaku-ai-claude/issues/7)), 부모 [#2](https://github.com/kthss01/mini-danmaku-ai-claude/issues/2)
-검증일: 2026-10-23
+검증일: 2026-10-23 (공식 산출물 재검증 포함)
 
 Taisei 웹 빌드(HTML/JS/WASM/리소스)를 로컬에서 제공하는 명령과, 산출물의 파일 참조·경로·MIME·HTTP 헤더를 검사하는 도구를 정리한다. 공개 배포는 범위에 포함하지 않는다. 로컬 URL(`http://127.0.0.1:…`)은 공개 URL이 아니다.
 
@@ -10,22 +10,26 @@ Taisei 웹 빌드(HTML/JS/WASM/리소스)를 로컬에서 제공하는 명령과
 | 항목 | 결과 |
 | --- | --- |
 | 서버 명령 | `python scripts/serve-web.py` (기본 루트 `build/web/site`, `127.0.0.1:8080`) |
-| 검사 명령 | `python scripts/check-web-assets.py --root <산출물> [--url http://127.0.0.1:8080]` |
+| 검사 명령 | `python scripts/check-web-assets.py --root <산출물> [--entry …] [--url http://127.0.0.1:8080] [--require-wasm]` |
 | WASM MIME | `application/wasm` 제공·검사 확인 |
 | 스레드(pthreads) | 현재 빌드는 사용하지 않음 → COOP/COEP 격리 헤더 불필요(옵션으로 제공) |
 | 리소스 경로 | `data/<sha256>` 상대 경로, 529개 207.1 MiB, 내용 해시 전부 일치 |
-| fixture 테스트 | 43개: Windows 42 통과 + symlink 권한 없어 1 skip, Linux(Docker python:3.12) 43 통과 (`tests/web-server`) |
-| 실제 산출물 검사 | 평면·중첩 두 배치 모두 통과(HTTP 541건), 브라우저에서 타이틀 화면까지 로딩 확인 |
+| fixture 테스트 | 49개: Windows 48 통과 + symlink 권한 없어 1 skip, Linux(Docker python:3.12) 49 통과 (`tests/web-server`) |
+| 공식 산출물 검사 | main `03f580b` 새 clone의 `build/web/site`: 진입 3종(`index.html`, `game/index.html`, `game/taisei.html`) 모두 통과, 브라우저에서 루트 진입→시작→인트로 장면까지 리소스 실패 0 |
+| 탐색 검증(이전) | 기존 로컬 빌드 평면·중첩 배치 통과(HTTP 541건) |
 
 ## 전제: 산출물 구조
 
-세션 1([#4](https://github.com/kthss01/mini-danmaku-ai-claude/issues/4))이 제안한 공통 계약은 다음과 같다. 세션 1 댓글로 확정되기 전까지 이 문서는 이 구조를 기본값으로 둔다.
+세션 1([#4](https://github.com/kthss01/mini-danmaku-ai-claude/issues/4), PR #11)과 세션 3([#6](https://github.com/kthss01/mini-danmaku-ai-claude/issues/6), PR #12)이 머지한 계약이다. 자세한 패키징 규칙은 `docs/web/BUILD.md`, 셸 구조는 `docs/web/SHELL.md`가 기준이다.
 
 ```text
 build/web/site/            ← 서빙 루트 (--root 기본값)
-  index.html               ← 세션 3 웹 셸 (web/ 를 루트로 복사)
-  game/                    ← 게임 산출물
-    taisei.html, taisei.js, taisei.wasm
+  index.html               ← 세션 3 루트 페이지. meta refresh·location.replace 로 game/index.html 로 이동
+  COPYING.txt, build-info.json
+  game/                    ← 게임 산출물 + 세션 3 셸(web/game/)
+    index.html             ← 게임 셸. shell-config.js 의 'taisei.js' 를 script 요소로 동적 주입
+    shell.js, shell.css, shell-config.js
+    taisei.html, taisei.js, taisei.wasm   ← taisei.html 은 업스트림 셸(직접 열어도 동작)
     data/<sha256> …        ← 리소스 (확장자 없음, 파일 이름 = 내용의 SHA-256)
     background.webp, scythe.webp, favicon.ico, COPYING.txt …
 ```
@@ -96,7 +100,11 @@ python scripts/check-web-assets.py --root build/web/site --url http://127.0.0.1:
 - 진입 HTML(`--entry`, 기본 `index.html`)에서 `script/link/img/a/source/css url()` 참조를 따라가며 로컬 파일 존재를 확인한다. 로컬 `.html` 링크는 재귀적으로 따라간다.
 - 대소문자가 다른 참조는 오류(`case-mismatch`). Windows에서는 열리지만 Linux 서버·공개 호스팅에서는 404가 된다.
 - `/`로 시작하는 절대 경로 참조는 오류(`absolute-path`). 하위 경로 배포를 깨뜨린다.
-- JS 문자열의 `.wasm`/`.data` 참조를 스크립트 기준 상대 경로로 확인한다.
+- `<meta http-equiv="refresh" content="…; url=…">` 이동 대상도 HTML 링크처럼 따라간다.
+- JS 문자열의 `.wasm`/`.data` 참조는 스크립트 기준 상대 경로로 확인한다(Emscripten `locateFile` 동작).
+- JS 문자열의 `.js` 참조(예: 세션 3 셸의 `shell-config.js`에 있는 `'taisei.js'`)는 `document.createElement('script')`로 주입되는 로더로 보고, 그 JS를 실행하는 **HTML 문서 기준** 상대 경로로 확인한 뒤 재귀적으로 따라간다. 파일이 없으면 오류다.
+- 한계: 문자열 결합으로 경로를 만드는 경우(예: `gameBase: 'game/'` + `'taisei.js'`)는 각 조각만 보이므로 추적하지 못한다. 현재 셸은 `gameBase: ''`이라 해당하지 않는다. 이런 구조로 바뀌면 `--require-wasm`이 놓침을 오류로 드러낸다.
+- `--require-wasm`: 진입에서 `.wasm`에 도달하지 못하면 경고 대신 오류로 처리한다. 게임 산출물 검증에는 항상 켠다.
 - `.wasm` 매직·버전·섹션 구조를 파싱하고 공유 메모리(pthreads) 사용 여부를 판정한다.
 - WASM 안의 `data/%s` 문자열로 리소스 요청 경로를 확인하고, `data/` 파일 이름이 SHA-256인지, `--verify-hashes`면 내용과 일치하는지 확인한다.
 
@@ -121,18 +129,64 @@ HTTP 검사(`--url`):
 python -m unittest discover -s tests/web-server -t tests/web-server -v
 ```
 
-결과(2026-10-23): 43개 테스트.
+결과(2026-10-23): 49개 테스트.
 
 | 환경 | 결과 |
 | --- | --- |
-| Windows 11, Python 3.12.2 | 42 통과, 1 skip(일반 사용자 권한으로 symlink 생성 불가, WinError 1314) |
-| Linux, Docker `python:3.12-slim`(3.12.15), `docker run --rm -v <clone>:/work -w /work python:3.12-slim python -m unittest discover -s tests/web-server -t tests/web-server` | 43 통과(symlink 테스트 포함) |
+| Windows 11, Python 3.12.2 | 48 통과, 1 skip(일반 사용자 권한으로 symlink 생성 불가, WinError 1314) |
+| Linux, Docker `python:3.12-slim`(3.12.15), `docker run --rm -v <clone>:/work -w /work python:3.12-slim python -m unittest discover -s tests/web-server -t tests/web-server` | 49 통과(symlink 테스트 포함) |
 
-포함 항목: index 제공, WASM/JS MIME, 중첩 상대 경로, 404, `no-store`/`nosniff`, 격리 헤더 on/off, 디렉터리 목록 차단, 경로 탈출 방지(`..`, 인코딩 역슬래시, 중첩 상위 경로, 루트 밖 symlink 파일·디렉터리), `--index`, 루트 부재·index 부재·포트 충돌 종료 코드, 문서 명령 그대로 자식 프로세스 실행·종료, 검사 도구의 누락·대소문자(추적 중단, Linux에서도 crash 없음)·절대 경로·루트 탈출·해시 불일치·잘못된 WASM·스레드 빌드 감지·잘못된 MIME 서버·HTML fallback 서버·진입 HTML 404(루트·중첩)·응답 없이 끊는 서버·접속 불가 검출.
+포함 항목: index 제공, WASM/JS MIME, 중첩 상대 경로, 404, `no-store`/`nosniff`, 격리 헤더 on/off, 디렉터리 목록 차단, 경로 탈출 방지(`..`, 인코딩 역슬래시, 중첩 상위 경로, 루트 밖 symlink 파일·디렉터리), `--index`, 루트 부재·index 부재·포트 충돌 종료 코드, 문서 명령 그대로 자식 프로세스 실행·종료, 검사 도구의 누락·대소문자(추적 중단, Linux에서도 crash 없음)·절대 경로·루트 탈출·해시 불일치·잘못된 WASM·스레드 빌드 감지·잘못된 MIME 서버·HTML fallback 서버·진입 HTML 404(루트·중첩)·응답 없이 끊는 서버·접속 불가 검출, 동적 주입 로더 추적(문서 기준 해석, 누락 시 오류)·meta refresh 추적·`--require-wasm`.
 
-## 실제 게임 산출물 검증
+## 공식 산출물 검증 (세션 1·3 머지 후)
 
-대상: 기존 `feat/web-playable` 로컬 작업(`scripts/build-web.ps1`, 공식 CI 이미지 + emsdk 5.0.3)으로 만든 `build/taisei-web`. Taisei fork 커밋 `5668c41b41f7227d21fc80cf56997d4d30356ce7`. 이 산출물을 세션 4 clone의 `build/`(Git 제외)로 복사해 검사했다. 세션 1의 공식 산출물이 머지되면 같은 명령으로 재검증한다.
+세션 1 PR #11(머지 `03f580b`)과 세션 3 PR #12(머지 `1ad54ea`)가 main에 들어간 뒤, 새 디렉터리에서 문서 명령 그대로 빌드·서빙·검사했다.
+
+```powershell
+git clone --recurse-submodules https://github.com/kthss01/mini-danmaku-ai-claude.git
+cd mini-danmaku-ai-claude
+.\scripts\build-web.ps1                          # 종료 코드 0, 270초(emsdk 캐시 사용)
+python scripts/serve-web.py                       # 기본 루트 build/web/site, http://127.0.0.1:8080/
+python scripts/check-web-assets.py --entry index.html       --url http://127.0.0.1:8080 --require-wasm --verify-hashes --sample-data -1 --json build/web/check/index_html.json
+python scripts/check-web-assets.py --entry game/index.html  --url http://127.0.0.1:8080 --require-wasm --verify-hashes --sample-data -1 --json build/web/check/game_index_html.json
+python scripts/check-web-assets.py --entry game/taisei.html --url http://127.0.0.1:8080 --require-wasm --verify-hashes --sample-data -1 --json build/web/check/game_taisei_html.json
+```
+
+출처(`build/web/site/build-info.json`):
+
+| 항목 | 값 |
+| --- | --- |
+| 메인 커밋 | `03f580bd9f54d23a08fba39dbe84b7d5be486612`, 미커밋 변경 없음(`repositoryDirtyEntries: []`, `webShellDirtyEntries: []`) |
+| Taisei fork | `5668c41b41f7227d21fc80cf56997d4d30356ce7`, 미커밋 변경 없음 |
+| 도구 | emsdk 5.0.3, `taiseiproject/linux-toolkit:20260804@sha256:1104b4a5…74b2` |
+| 빌드 시각 | 2026-10-23T12:30:24Z 시작, 패키징 12:34:38Z (`BuildAndPackage`) |
+| site | 진입 `game/index.html`, 549개 파일(build-info 제외), 222,407,535 B |
+| `build-info.json` SHA-256 | `f9535df8adf82d5287668e9412ca4b493ce6b9be58e122eee0873d92f0688484` |
+| `game/taisei.wasm` | 4,538,726 B, `3c43a6b1a780bdaae65e89d63b69bff2ab1b7c4cfe329f81b6882fb10b084192` |
+| `game/taisei.js` | `3e7ed5b785d039c22c67bb87a70b36ee01d3b96202ff715643d7e97eb33c8d64` |
+| `game/index.html` | `0a8b31f86be3f7b53cce0d3ae88d7d49ea5ac02e5c652597ab4d439596c08f2d` |
+| `game/data/` | 529개, 217,186,447 B. 목록 매니페스트(이름순 `<이름> <크기>` 줄을 LF로 이어 붙인 텍스트의 SHA-256) `aa172eaf613c3e7e39bfd142b5a58b64cf7f8d55be512eaa9a0f11217ddfa3db` |
+
+`taisei.wasm` 해시는 탐색 검증에 쓴 이전 로컬 빌드(`eb97b68b…`)와 다르다. 세션 1이 기록한 대로 wasm 바이트 재현성은 보장되지 않으며, `taisei.js`와 `data/` 이름 목록은 같다.
+
+검사 결과:
+
+| 진입 | 참조 리소스 | HTTP 검사 | 결과 |
+| --- | --- | --- | --- |
+| `index.html`(서빙 루트) | 9 | 543건 실패 0 | 통과, 오류 0·경고 0 |
+| `game/index.html`(세션 3 셸) | 8 | 542건 실패 0 | 통과, 오류 0·경고 0 |
+| `game/taisei.html`(업스트림 셸) | 5 | 539건 실패 0 | 통과, 오류 0·경고 0 |
+
+- 세 진입 모두 `game/taisei.wasm`(유효, 섹션 11개, 공유 메모리 없음)과 `game/data/` 529개에 도달했고, 529개 모두 이름과 내용 SHA-256이 일치했다(정적·HTTP 양쪽).
+- 루트는 `<a href="game/index.html">`·meta refresh로 셸에 닿고, 셸은 `shell-config.js`의 `'taisei.js'`를 문서 기준으로 풀어 `game/taisei.js` → `game/taisei.wasm`으로 이어진다. `data/` 위치는 로더를 실행하는 문서(`game/index.html`) 기준 `game/data/`로 판정됐다.
+- `GET /` → `index.html`, `GET /game/` → `game/index.html`(200 `text/html`), 없는 경로·없는 `.wasm` → 404, `.wasm` → `application/wasm`, 전 응답 `no-store`·`nosniff`, COOP/COEP 없음(스레드 미사용이라 불필요).
+- 이 수정 전 검사기(PR #10 버전)는 `game/index.html` 진입에서 동적 주입 로더를 따라가지 못해 WASM·`data/`를 검사하지 않고 경고 1건으로 통과시켰다. 이 문서의 결과는 수정된 검사기 기준이다.
+
+브라우저 확인(Claude 데스크톱 내장 Chromium): `http://127.0.0.1:8080/`을 열면 `game/index.html`로 이동했고 시작 버튼을 누르자 인트로 장면(The Hakurei Shrine)까지 렌더링됐다. 리소스 250건 중 4xx/5xx 0건, `game/taisei.js`·`game/taisei.wasm`(4,538,726 B) 200, `data/` 요청 244건 모두 `/game/data/` 아래였다. 확인 시점에 버퍼에 남은 콘솔 오류는 0건이었으나 앞선 로그 888건은 버퍼에서 밀려나 확인하지 못했다. 조작·소리·플레이 판정은 세션 5 범위다.
+
+## 탐색 검증: 기존 로컬 빌드 (공식 산출물 이전)
+
+대상: 기존 `feat/web-playable` 로컬 작업(`scripts/build-web.ps1`, 공식 CI 이미지 + emsdk 5.0.3)으로 만든 `build/taisei-web`. Taisei fork 커밋 `5668c41b41f7227d21fc80cf56997d4d30356ce7`. 이 산출물을 세션 4 clone의 `build/`(Git 제외)로 복사해 검사했다. 공식 산출물 검증은 위 절에 있으며, 이 절은 그 전에 수행한 탐색 검증 기록이다.
 
 산출물 구성: `taisei.html` 12,168 B, `taisei.js` 100,933 B, `taisei.wasm` 4,538,726 B, `data/` 529개 207.1 MiB, `background.webp`, `scythe.webp`, `favicon.ico`, `COPYING.txt`, 문서 텍스트·HTML, 그리고 `web/index.html`(현재 로컬 셸).
 
@@ -179,7 +233,8 @@ python scripts/check-web-assets.py --root build/real-nested --url http://127.0.0
 
 ## 미검증·남은 사항
 
-- 세션 1의 공식 `build/web/site` 산출물과 세션 3 셸의 실제 링크 경로는 아직 없다. 머지 후 `python scripts/check-web-assets.py --root build/web/site --url …`로 재검증해야 한다.
+- 공식 산출물 검증은 Windows 한 대(이 PC)에서만 수행했다. 다른 PC·Linux 호스트에서의 빌드·서빙 재현은 세션 5 범위다.
+- 검사기는 문자열 결합으로 만든 로더 경로를 추적하지 못한다. `--require-wasm`으로 놓침을 오류로 드러낸다.
 - 브라우저 조작·사운드·플레이·저장 검증은 세션 5 범위다.
 - 서버는 HTTP/1.0 단순 정적 서버다. 공개 호스팅은 별도 결정 후 진행한다.
 - `scripts/README.md`에 두 스크립트 항목을 추가하는 일은 공용 파일이므로 세션 5 통합 문서에 맡긴다.

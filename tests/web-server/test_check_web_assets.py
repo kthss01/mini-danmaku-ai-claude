@@ -299,6 +299,78 @@ class LiveScanTests(unittest.TestCase):
         self.assertNotIn("Traceback", text)
 
 
+class DynamicLoaderTests(unittest.TestCase):
+    """세션 3 셸처럼 로더(game.js)를 JS 문자열로 동적 주입하는 구조를 추적하는지 검증한다."""
+
+    def make_site(self, loader_name: str = "game.js") -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "site"
+        shutil.copytree(FIXTURE_SITE, root)
+        # 셸 HTML 은 game/ 에, 설정 JS 는 game/js/ 에 둔다. 로더 이름은 JS 파일이 아니라 문서 기준으로 풀려야 한다.
+        (root / "game" / "js").mkdir()
+        (root / "game" / "shell.html").write_text(
+            '<!doctype html><html><head><meta charset="utf-8"></head><body><canvas></canvas>'
+            '<script src="js/shell-config.js"></script><script src="js/shell.js"></script></body></html>',
+            encoding="utf-8")
+        (root / "game" / "js" / "shell-config.js").write_text(
+            f"window.CFG = {{ gameBase: '', gameScript: '{loader_name}' }};\n", encoding="utf-8")
+        (root / "game" / "js" / "shell.js").write_text(
+            "var s = document.createElement('script'); s.src = window.CFG.gameBase + window.CFG.gameScript;\n"
+            "document.body.appendChild(s);\n", encoding="utf-8")
+        (root / "redirect.html").write_text(
+            '<!doctype html><html><head><meta http-equiv="refresh" content="0; url=game/shell.html"></head>'
+            '<body>moving</body></html>', encoding="utf-8")
+        return root
+
+    def test_dynamic_loader_reaches_wasm_and_data(self):
+        root = self.make_site()
+        report = static_report(root, entry="game/shell.html")
+        self.assertEqual(codes(report), [])
+        self.assertEqual(report.wasm_files, ["game/game.wasm"])
+        self.assertIn("game/game.js", report.resources)
+        # data/ 는 로더를 실행하는 문서(game/shell.html) 기준이므로 game/data 로 잡혀야 한다.
+        self.assertEqual(list(report.data_dirs), ["game/data"])
+
+    def test_loader_name_resolved_against_document_not_script(self):
+        # 'game.js' 를 JS 파일 위치(game/js/) 기준으로 풀면 game/js/game.js(없음)가 되어 오류가 났을 것이다.
+        report = static_report(self.make_site(), entry="game/shell.html")
+        self.assertNotIn("missing-file", codes(report))
+        self.assertNotIn("game/js/game.js", report.resources)
+
+    def test_meta_refresh_is_followed(self):
+        report = static_report(self.make_site(), entry="redirect.html")
+        self.assertEqual(codes(report), [])
+        self.assertEqual(report.wasm_files, ["game/game.wasm"])
+
+    def test_missing_dynamic_loader_is_error(self):
+        root = self.make_site(loader_name="missing-loader.js")
+        report = static_report(root, entry="game/shell.html")
+        errors = [f for f in report.findings if f.level == "error"]
+        self.assertIn("missing-file", [f.code for f in errors])
+        self.assertTrue(any("JS 동적 스크립트" in f.message for f in errors))
+
+    def test_require_wasm_turns_warning_into_error(self):
+        root = self.make_site(loader_name="missing-loader.js")
+        code, text = run_check(["--root", str(root), "--entry", "game/shell.html"])
+        self.assertEqual(code, check_web_assets.EXIT_FINDINGS, text)  # 누락 로더 자체가 오류
+        (root / "lonely.html").write_text("<html><body>no game</body></html>", encoding="utf-8")
+        code, text = run_check(["--root", str(root), "--entry", "lonely.html"])
+        self.assertEqual(code, check_web_assets.EXIT_OK, text)
+        self.assertIn("no-wasm", text)
+        code, text = run_check(["--root", str(root), "--entry", "lonely.html", "--require-wasm"])
+        self.assertEqual(code, check_web_assets.EXIT_FINDINGS, text)
+        self.assertIn("--require-wasm", text)
+
+    def test_dynamic_loader_live_check(self):
+        root = self.make_site()
+        with LiveServer(root) as live:
+            code, text = run_check(["--root", str(root), "--entry", "game/shell.html", "--url", live.url,
+                                    "--require-wasm", "--sample-data", "-1", "--verify-hashes"])
+        self.assertEqual(code, check_web_assets.EXIT_OK, text)
+        self.assertIn("결과: 통과", text)
+
+
 class WasmInspectTests(unittest.TestCase):
     def test_inspect_minimal_modules(self):
         plain = check_web_assets.inspect_wasm(make_fixture.make_wasm())
