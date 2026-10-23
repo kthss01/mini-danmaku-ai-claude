@@ -11,11 +11,13 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Taisei 커밋 | `5668c41b41f7227d21fc80cf56997d4d30356ce7` (submodule 고정값) |
+| Taisei 커밋 | `f59212b72df3b68459b4677a6200e42be700078a` (submodule 고정값. fork PR kthss01/taisei#1 머지 커밋: 리소스 내려받기 실패 시 무한 재시도 대신 오류로 중단, [RUNTIME.md](RUNTIME.md) 4장) |
 | 빌드 이미지 | `taiseiproject/linux-toolkit:20260804@sha256:1104b4a5bba4d7f03f7d03cd6990571b476afe276c97d9d8074c33b1834474b2` |
 | emsdk / Emscripten | `5.0.3` (emsdk 태그 `5.0.3`로 clone) |
 | Meson cross-file | `misc/ci/common-options.ini`, `misc/ci/forcefallback.ini`, `configs/web-build/emscripten-toolchain.ini`, `misc/ci/emscripten-build.ini` |
 | 추가 옵션 | `-Dbuild.cpp_std=gnu++14` (공식 CI와 동일) |
+
+이전 고정값은 `5668c41b41f7227d21fc80cf56997d4d30356ce7`(업스트림 `master`)이다. 아래 "검증 결과"의 앞 절들은 당시 커밋으로 만든 증거이며 그대로 둔다.
 
 emsdk 설치본은 Docker named volume `taisei-emsdk-5.0.3`에 캐시한다. 처음 한 번은 emsdk와 LLVM 툴체인을 내려받으므로 시간이 더 걸린다.
 
@@ -115,7 +117,51 @@ build/web/
 
 ## 검증 결과
 
-### 깨끗한 clone 재현
+### 공식 빌드 (Taisei `f59212b7`, 메인 `797f880`, 최신)
+
+gitlink 갱신 커밋 `797f880`을 만든 뒤 작업 트리에 미커밋 변경이 없는 상태에서 `.\scripts\build-web.ps1 -Force`로 빌드했다. main에 머지된 세션 3 셸(`web/`)이 함께 패키징됐다. 이후 커밋은 이 절을 기록한 문서 변경뿐이며 빌드 입력 파일은 바뀌지 않았다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 종료 코드 | 0 |
+| 소요 시간 | 4분 31초 (emsdk 캐시 사용) |
+| `build.taiseiCommit` | `f59212b72df3b68459b4677a6200e42be700078a` |
+| `build.repositoryCommit` | `797f88000b67b88c9f583bbff3e64648fc13d9e7` |
+| 미커밋 변경 (메인·Taisei·`web/`) | 없음 |
+| 빌드 시각(UTC) | 시작 `2026-10-23T12:31:22Z`, 종료 `2026-10-23T12:35:37Z` |
+| `site.entry` | `game/index.html` |
+| `site/` 파일 수 | 549 (`build-info.json` 제외) |
+| `site/` 총 용량 | 222,408,181 바이트 (`build-info.json` 제외) |
+| `data/` | 529개, 217,186,447 바이트 (`5668c41b` 빌드와 같은 목록) |
+
+| 파일 | 크기 (바이트) | SHA-256 |
+| --- | --- | --- |
+| `game/taisei.wasm` | 4,539,198 | `76f6b39da5aa417fd41c7cbfb59da4216df0e7a3f1f02feb3c8be97fd1826192` |
+| `game/taisei.js` | 101,107 | `d49ca968c16d0a69cc275f21a2f537db51c151a25401781c911149c328c73a01` |
+| `game/taisei.html` | 12,168 | `113240a898a555b79b8dcfa49c75fe5aa89a68831c377431347e8127ca3ac555` |
+| `index.html` | - | `f0728725fe9680f3d19832f9693e6bb9a1a279d5c822cf5f58fbc10c68626b16` |
+| `game/index.html` | - | `0a8b31f86be3f7b53cce0d3ae88d7d49ea5ac02e5c652597ab4d439596c08f2d` |
+| `game/shell.js` | - | `aee98beb3689e41ba1bbe20ed10524034651b3271ad411a559403d908f8c8d57` |
+| `COPYING.txt` | 2,529 | `507ba6eaceaf6fd923246480f53932b25a1ebbb25b2dd19c4f37bfc5fc83795a` |
+
+`taisei.js`와 `taisei.wasm`은 fork 수정이 반영되어 `5668c41b` 빌드보다 커졌다. 전체 해시 목록은 `build/web/site/build-info.json`에 있다.
+
+서빙·자산 검사(세션 4 도구, `python scripts/serve-web.py --port 8762`):
+
+| 검사 명령 진입 | 결과 |
+| --- | --- |
+| `--entry game/taisei.html --verify-hashes --sample-data -1` | 통과. 오류 0, 경고 0. HTTP 539건 실패 0. `taisei.wasm` 유효(섹션 11개), `data/` 529개 내용 해시 일치 |
+| 기본 진입(`index.html`), `--entry game/index.html` | 통과(오류 0). 세션 3 셸이 `taisei.js`를 동적으로 불러와 도구가 wasm 참조를 추적하지 못해 `no-wasm` 경고 1건 |
+
+브라우저 진입 확인(Claude 데스크톱 앱 내장 Chromium, 빈 IndexedDB 포트):
+
+- `http://127.0.0.1:8762/` → `game/index.html`로 이동, `window.taiseiShell.state`는 `ready`
+- "게임 시작" 클릭 후 약 20초 시점: `state=playing`, `hadFirstFrame=true`, `downloadErrors`·셸 `errors` 없음
+- `game/taisei.wasm` 200, `data/` 요청 244건 모두 `/game/data/`, 400 이상 응답 없음
+
+조작·오디오·저장과 실제 Chrome/Edge 검증은 세션 5의 공식 QA 범위다.
+
+### 깨끗한 clone 재현 (Taisei `5668c41b`)
 
 새 디렉터리에 `git clone --recurse-submodules`로 받은 뒤 `.\scripts\build-web.ps1`을 실행했다. emsdk는 이전 실행에서 채운 named volume을 재사용했다.
 
@@ -137,7 +183,7 @@ build/web/
 
 위 표는 출처 기록을 도입하기 전 스크립트(메인 커밋 `f3b52f1`)로 만든 결과다.
 
-### 출처·`data/` 기록 도입 후 재빌드 (최신)
+### 출처·`data/` 기록 도입 후 재빌드 (Taisei `5668c41b`)
 
 같은 clone에서 `.\scripts\build-web.ps1 -Force`로 다시 컴파일했다. 메인 커밋 `d5f0bbd`에 `scripts/build-web.ps1`, `docs/web/BUILD.md` 미커밋 수정이 있는 상태였고, 출처 기록에 그 사실이 남았다.
 
@@ -187,16 +233,16 @@ build/web/
 | 임시 `web/index.html`, `web/game/index.html`, `shell.js`, `shell.css`, `shell-config.js` 추가 후 `-PackageOnly` | 성공. `site.entry=game/index.html`, `site.sha256`에 셸 4개 포함, `packaging.webShellSha256`에 `web/` 파일 5개 기록 |
 | `web/` 삭제 후 `-PackageOnly` | 성공. `site.entry=game/taisei.html`로 복귀 |
 
-### 브라우저 로딩 확인 (스모크 테스트)
+### 브라우저 로딩 확인 (스모크 테스트, Taisei `5668c41b`)
 
 `build/web/site`를 `python -m http.server 8761 --bind 127.0.0.1`로 제공하고 Claude 데스크톱 앱 내장 Chromium 브라우저에서 `http://127.0.0.1:8761/game/taisei.html`을 열었다.
 
 - 로딩 진행률 표시 후 게임이 시작되어 첫 장면이 렌더링되고 창 제목이 `Taisei Project v1.5-dev`로 바뀌었다.
 - 약 25초 동안 리소스 요청 250건 중 `data/` 요청 246건이 모두 `/game/data/` 경로로 나갔고 400 이상 응답은 없었다.
-- 게임 로그의 오류 항목은 다음과 같다. 플레이에 영향이 없는지는 세션 2가 확인하기 전까지 판정하지 않는다.
+- 게임 로그의 오류 항목은 다음과 같다. 분류는 세션 2의 [RUNTIME.md](RUNTIME.md) 2.1·2.6절 분석을 따른다.
   - `storage/config`, `progress.zst` 없음: 저장 데이터가 없는 첫 실행에서 예상되는 메시지
-  - `SDL_CreateSemaphore() failed: SDL not built with thread support`: 웹 빌드는 스레드 비활성이라 예상되는 메시지. 작업 관리자(taskmgr) 동작에 미치는 영향은 미확인
-  - `res/shader/global.pp` 없음 → 후처리 파이프라인 `global` 로드 실패: Windows 빌드에서도 같은 메시지가 나오며 영향은 미확인
+  - `SDL_CreateSemaphore() failed: SDL not built with thread support`: 웹 빌드는 스레드 비활성이다. 작업 관리자가 없으면 `taskmgr_global_submit()`이 콜백을 즉시 실행하는 동기 폴백으로 동작한다(RUNTIME.md 2.1절).
+  - `res/shader/global.pp` 없음 → 후처리 파이프라인 `global` 로드 실패: 선택(`RESF_OPTIONAL`) 후처리 체인이고 기본 리소스에 `.pp` 파일이 없어 화면 영향이 없다(RUNTIME.md 2.6절). Windows 빌드에서도 같은 메시지가 나온다.
 
 키 입력, 스테이지 진입, 오디오, 저장·리플레이는 이 문서의 검증 범위가 아니다. 세션 2·5가 검증한다.
 
@@ -204,6 +250,6 @@ build/web/
 
 - 게임 리소스 패키지(`data/`) 총 크기는 약 207 MiB다. 리소스는 필요할 때 개별 요청하므로 초기 전송량은 이보다 작으며, 스모크 테스트 25초 동안에는 529개 중 246개를 요청했다. 실제 초기 전송량은 측정하지 않았다. 내려받은 파일은 IDBFS에 캐시된다.
 - wasm 바이트 단위 재현성은 확인되지 않았다(머지 차단 조건 아님).
-- `SDL_CreateSemaphore` 실패와 `res/shader/global.pp` 누락 메시지의 영향은 세션 2에서 확인이 필요하다.
-- 업스트림 셸 문구는 영어이며 "실험적(Experimental)" 경고를 표시한다. 한국어 안내는 세션 3의 `web/` 셸이 담당한다.
+- `SDL_CreateSemaphore` 실패와 `res/shader/global.pp` 누락 메시지의 분류는 [RUNTIME.md](RUNTIME.md)를 따른다. 실제 플레이 영향의 최종 판정은 세션 5의 통합 QA에서 한다.
+- 업스트림 셸(`game/taisei.html`) 문구는 영어이며 "실험적(Experimental)" 경고를 표시한다. 한국어 진입 셸은 세션 3의 `web/`(`game/index.html`)이 담당한다.
 - macOS·Linux 호스트용 빌드 스크립트는 제공하지 않는다. `configs/web-build/container-build.sh`는 같은 이미지에서 그대로 사용할 수 있다.
