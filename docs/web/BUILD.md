@@ -34,7 +34,7 @@ Set-Location mini-danmaku-ai-claude
 | --- | --- |
 | (없음) | 컴파일·`meson install` 후 사이트 패키징. `build/web/install`이 이미 있으면 중단 |
 | `-Force` | 기존 `build/web/install`을 지우고 다시 컴파일 |
-| `-PackageOnly` | 컴파일 없이 기존 `build/web/install`로 `build/web/site`만 다시 구성 |
+| `-PackageOnly` | 컴파일 없이 기존 `build/web/install`로 `build/web/site`만 다시 구성. `install-provenance.json`이 없거나 install 파일 해시가 기록과 다르면 거부 |
 
 `build/web/site`는 실행할 때마다 새로 만든다. `build/`는 `.gitignore`로 제외되어 산출물이 커밋되지 않는다.
 
@@ -42,18 +42,33 @@ Set-Location mini-danmaku-ai-claude
 
 1. `configs/web-build/container-build.sh`를 LF로 정규화해 `build/web/.container-build.sh`에 쓴다.
 2. 컨테이너에서 emsdk를 설치·활성화하고, `game/taisei`를 LF로 다시 checkout해 Meson으로 빌드한다.
-3. `meson install` 결과를 `build/web/install`에 둔다.
-4. `build/web/site`를 구성하고 필수 파일(`taisei.html`, `taisei.js`, `taisei.wasm`, `data/`)이 없으면 실패한다.
+3. `meson install` 결과를 `build/web/install`에 두고, 컴파일 성공 시에만 `build/web/install-provenance.json`에 빌드 출처를 기록한다.
+4. 출처 기록과 install의 `taisei.html`, `taisei.js`, `taisei.wasm`, `COPYING.txt` 해시가 일치하는지 확인한다.
+5. `build/web/site`를 구성하고 필수 파일이 없으면 실패한다. `build-info.json`에 빌드 출처와 이번 패키징 정보를 분리해 기록한다.
+
+### 빌드 출처와 패키징 정보
+
+`-PackageOnly`는 컴파일하지 않은 바이너리를 현재 HEAD의 빌드로 기록하면 안 되므로 두 기록을 분리한다.
+
+| 파일 | 기록 시점 | 내용 |
+| --- | --- | --- |
+| `build/web/install-provenance.json` | 컴파일 성공 시 | 빌드 시작·종료 시각(UTC), Taisei 커밋, 메인 커밋, 양쪽 작업 트리의 미커밋 변경 목록, 빌드 입력 파일 해시, emsdk 버전, 이미지, install 파일 SHA-256, `data/` 파일 수 |
+| `build/web/site/build-info.json` | 패키징할 때마다 | `build`(위 출처 기록 그대로), `packaging`(패키징 시각, 모드, 현재 메인 커밋, 미커밋 변경, `web/` 존재 여부와 변경), `site`(진입 URL, 파일 수, 용량, 주요 파일 SHA-256) |
+
+- 출처 기록이 없는 install(이 변경 이전에 만든 것 포함)은 패키징을 거부한다. `-Force`로 다시 빌드한다.
+- 라이선스 고지는 현재 작업 트리가 아니라 install에 포함된 그 빌드의 `COPYING.txt`를 복사한다.
+- `build.buildStartedAtUtc`가 실제 빌드 시각이다. 파일 수정 시각은 복사 시점이므로 빌드 시각으로 쓰지 않는다.
 
 ## 산출물 계약
 
 ```text
 build/web/
-├── install/              # meson install 원본 (중간 산출물)
-└── site/                 # 최종 서빙 루트
+├── install/                  # meson install 원본 (중간 산출물)
+├── install-provenance.json   # install을 만든 빌드의 출처 (컴파일 성공 시에만 기록)
+└── site/                     # 최종 서빙 루트
     ├── (web/의 정적 셸 파일, web/game/ 제외)   # 세션 3
-    ├── COPYING.txt
-    ├── build-info.json   # 커밋·도구 버전·파일 수·총 용량
+    ├── COPYING.txt           # 해당 빌드 install의 고지
+    ├── build-info.json       # build: 빌드 출처 / packaging: 패키징 정보 / site: 파일 해시
     └── game/
         ├── taisei.html   # 업스트림 셸 (createTaisei 호출)
         ├── taisei.js     # MODULARIZE 로더, 전역 createTaisei
@@ -105,16 +120,44 @@ build/web/
 | `game/taisei.js` | 100,933 | `3e7ed5b785d039c22c67bb87a70b36ee01d3b96202ff715643d7e97eb33c8d64` |
 | `game/taisei.html` | 12,168 | `113240a898a555b79b8dcfa49c75fe5aa89a68831c377431347e8127ca3ac555` |
 
-같은 커밋으로 다른 작업 폴더에서 한 번 더 빌드해 비교했다.
+위 표는 출처 기록을 도입하기 전 스크립트(메인 커밋 `f3b52f1`)로 만든 결과다.
 
-- `taisei.js`와 `data/` 파일 이름 529개는 동일했다.
-- `taisei.wasm`은 크기는 같지만 해시가 달랐다. 바이트 단위 재현성은 보장하지 않는 것으로 기록한다.
+### 출처 기록 도입 후 재빌드
+
+같은 clone에서 `.\scripts\build-web.ps1 -Force`로 다시 컴파일했다(메인 작업 트리에 `scripts/build-web.ps1` 수정이 있는 상태였고, 출처 기록에 그 사실이 남았다).
+
+| 항목 | 결과 |
+| --- | --- |
+| 종료 코드 | 0 |
+| 소요 시간 | 4분 33초 (emsdk 캐시 사용) |
+| 빌드 시각(UTC) | 시작 `2026-10-23T11:52:05Z`, 종료 `2026-10-23T11:56:24Z` |
+| `site/` 파일 수 | 544 (`build-info.json` 제외, `web/` 없음) |
+| `site/` 총 용량 | 222,368,303 바이트 (`build-info.json` 제외) |
+| `data/` 파일 수 | 529 |
+
+| 파일 | 크기 (바이트) | SHA-256 |
+| --- | --- | --- |
+| `game/taisei.wasm` | 4,538,726 | `239e03807d18bc5f1ecd4123bbbb1784bad95e8a9766eb7601aa1472b9440a1c` |
+| `game/taisei.js` | 100,933 | `3e7ed5b785d039c22c67bb87a70b36ee01d3b96202ff715643d7e97eb33c8d64` |
+| `game/taisei.html` | 12,168 | `113240a898a555b79b8dcfa49c75fe5aa89a68831c377431347e8127ca3ac555` |
+| `COPYING.txt` | 2,529 | `507ba6eaceaf6fd923246480f53932b25a1ebbb25b2dd19c4f37bfc5fc83795a` |
+
+같은 Taisei 커밋으로 세 번 빌드한 결과를 비교하면 `taisei.js`, `taisei.html`, `data/` 파일 이름 529개는 모두 같았고, `taisei.wasm`만 크기는 같은데 해시가 매번 달랐다(`eb97b68b…`, `68e8638c…`, `239e0380…`). 바이트 단위 재현성은 보장하지 않는 것으로 기록한다.
 
 ### 스크립트 동작 확인
 
-- `-PackageOnly`: 컴파일 없이 `site`를 다시 구성했다. 로컬 서버가 `site`를 제공하는 중에도 동작한다.
 - 옵션 없이 다시 실행하면 `build/web/install already exists` 오류로 중단되어 기존 결과를 덮어쓰지 않는다.
+- `-PackageOnly`: 컴파일 없이 `site`를 다시 구성했다. 로컬 서버가 `site`를 제공하는 중에도 동작한다.
 - 임시 `web/index.html`, `web/game/overlay.txt`로 패키징하면 각각 `site/index.html`, `site/game/overlay.txt`에 배치되고 `site/game/index.html`, `site/overlay.txt`는 생기지 않았다.
+
+출처 기록 시나리오(모두 이 clone에서 수행):
+
+| 시나리오 | 결과 |
+| --- | --- |
+| 출처 기록 없는 기존 install에 `-PackageOnly` | `install-provenance.json is missing … Rebuild with -Force` 오류로 거부 |
+| 메인 커밋 `f3b52f1`에서 빌드 → 스크립트 커밋 `dad358e`로 HEAD 변경 + 임시 `web/` 추가 → `-PackageOnly` | 성공. `build.repositoryCommit`은 `f3b52f1` 유지, `packaging.repositoryCommit`은 `dad358e`, `packaging.mode`는 `PackageOnly`, `webShellDirtyEntries`에 `?? web/` 기록. `install-provenance.json` 해시 불변 |
+| `install/taisei.html` 끝에 주석 추가 후 `-PackageOnly` | `does not match install-provenance.json` 오류로 거부 |
+| 원본 복원·`web/` 삭제 후 `-PackageOnly` | 성공. 544개 파일, 222,368,303바이트 |
 
 ### 브라우저 로딩 확인 (스모크 테스트)
 
@@ -122,17 +165,17 @@ build/web/
 
 - 로딩 진행률 표시 후 게임이 시작되어 첫 장면이 렌더링되고 창 제목이 `Taisei Project v1.5-dev`로 바뀌었다.
 - 약 25초 동안 리소스 요청 250건 중 `data/` 요청 246건이 모두 `/game/data/` 경로로 나갔고 400 이상 응답은 없었다.
-- 게임 로그의 오류 항목은 다음과 같다. 처음 세 항목은 첫 실행의 정상 메시지이고, `global.pp`는 Windows 빌드에서도 같은 메시지가 나온다.
-  - `storage/config`, `progress.zst` 없음 (첫 실행)
-  - `SDL_CreateSemaphore() failed: SDL not built with thread support` (웹 빌드는 스레드 비활성)
-  - `res/shader/global.pp` 없음 → 후처리 파이프라인 `global` 로드 실패
+- 게임 로그의 오류 항목은 다음과 같다. 플레이에 영향이 없는지는 세션 2가 확인하기 전까지 판정하지 않는다.
+  - `storage/config`, `progress.zst` 없음: 저장 데이터가 없는 첫 실행에서 예상되는 메시지
+  - `SDL_CreateSemaphore() failed: SDL not built with thread support`: 웹 빌드는 스레드 비활성이라 예상되는 메시지. 작업 관리자(taskmgr) 동작에 미치는 영향은 미확인
+  - `res/shader/global.pp` 없음 → 후처리 파이프라인 `global` 로드 실패: Windows 빌드에서도 같은 메시지가 나오며 영향은 미확인
 
 키 입력, 스테이지 진입, 오디오, 저장·리플레이는 이 문서의 검증 범위가 아니다. 세션 2·5가 검증한다.
 
 ## 제약과 남은 문제
 
-- 첫 실행 시 리소스 약 209 MiB를 내려받는다. 이후 IDBFS 캐시를 사용한다.
-- wasm 바이트 단위 재현성은 확인되지 않았다.
-- `res/shader/global.pp` 누락 메시지의 영향은 세션 2에서 확인이 필요하다.
+- 게임 리소스 패키지(`data/`) 총 크기는 약 207 MiB다. 리소스는 필요할 때 개별 요청하므로 초기 전송량은 이보다 작으며, 스모크 테스트 25초 동안에는 529개 중 246개를 요청했다. 실제 초기 전송량은 측정하지 않았다. 내려받은 파일은 IDBFS에 캐시된다.
+- wasm 바이트 단위 재현성은 확인되지 않았다(머지 차단 조건 아님).
+- `SDL_CreateSemaphore` 실패와 `res/shader/global.pp` 누락 메시지의 영향은 세션 2에서 확인이 필요하다.
 - 업스트림 셸 문구는 영어이며 "실험적(Experimental)" 경고를 표시한다. 한국어 안내는 세션 3의 `web/` 셸이 담당한다.
 - macOS·Linux 호스트용 빌드 스크립트는 제공하지 않는다. `configs/web-build/container-build.sh`는 같은 이미지에서 그대로 사용할 수 있다.
