@@ -12,12 +12,12 @@
 | 항목 | 값 |
 | --- | --- |
 | Taisei 커밋 | `f59212b72df3b68459b4677a6200e42be700078a` (submodule 고정값. fork PR kthss01/taisei#1 머지 커밋: 리소스 내려받기 실패 시 무한 재시도 대신 오류로 중단, [RUNTIME.md](RUNTIME.md) 4장) |
-
-이전 고정값은 `5668c41b41f7227d21fc80cf56997d4d30356ce7`(업스트림 `master`)이다. 아래 "검증 결과"의 앞 절들은 당시 커밋으로 만든 증거이며 그대로 둔다.
 | 빌드 이미지 | `taiseiproject/linux-toolkit:20260804@sha256:1104b4a5bba4d7f03f7d03cd6990571b476afe276c97d9d8074c33b1834474b2` |
 | emsdk / Emscripten | `5.0.3` (emsdk 태그 `5.0.3`로 clone) |
 | Meson cross-file | `misc/ci/common-options.ini`, `misc/ci/forcefallback.ini`, `configs/web-build/emscripten-toolchain.ini`, `misc/ci/emscripten-build.ini` |
 | 추가 옵션 | `-Dbuild.cpp_std=gnu++14` (공식 CI와 동일) |
+
+이전 고정값은 `5668c41b41f7227d21fc80cf56997d4d30356ce7`(업스트림 `master`)이다. 아래 "검증 결과"의 앞 절들은 당시 커밋으로 만든 증거이며 그대로 둔다.
 
 emsdk 설치본은 Docker named volume `taisei-emsdk-5.0.3`에 캐시한다. 처음 한 번은 emsdk와 LLVM 툴체인을 내려받으므로 시간이 더 걸린다.
 
