@@ -138,9 +138,12 @@ if ($SiteDirectory) {
         } else {
             $site['manifest'] = '없음 → 빌드 시각·출처 미확인 (빌드 로그로만 확인 가능)'
         }
+        # 해시 대상: 루트 셸, 라이선스, 세션 3 게임 셸(game/index.html + shell.*), 업스트림 셸·로더·wasm.
         $targets = @()
         foreach ($name in @('index.html', 'COPYING.txt')) { $targets += @{ Label = $name; Path = (Join-Path $sitePath $name) } }
-        foreach ($name in @('taisei.html', 'taisei.js', 'taisei.wasm')) {
+        $gameFiles = @('index.html', 'shell.js', 'shell.css', 'shell-config.js', 'taisei.html', 'taisei.js', 'taisei.wasm')
+        foreach ($name in $gameFiles) {
+            if ($gameDir -eq $sitePath -and $name -eq 'index.html') { continue }
             $label = if ($gameDir -eq $sitePath) { $name } else { "game/$name" }
             $targets += @{ Label = $label; Path = (Join-Path $gameDir $name) }
         }
