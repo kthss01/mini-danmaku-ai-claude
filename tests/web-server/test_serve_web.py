@@ -131,10 +131,50 @@ class ServeWebOptionTests(unittest.TestCase):
             root.mkdir()
             (root / "index.html").write_text("<html></html>", encoding="utf-8")
             with LiveServer(root) as live:
-                for path in ("/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt", "/site/../../secret.txt"):
+                for path in (
+                    "/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt", "/site/../../secret.txt",
+                    # Windows 구분자: unquote 하면 '..\\secret.txt' 한 요소가 된다.
+                    "/..%5csecret.txt", "/%5c..%5csecret.txt", "/game/..%5c..%5csecret.txt",
+                    "/..%5c..%5c..%5csecret.txt", "/%2e%2e%5c%2e%2e%5csecret.txt",
+                ):
                     status, _, body = live.get(path)
                     self.assertNotEqual(body, b"secret", path)
-                    self.assertIn(status, (301, 404), path)
+                    # 거부된 요소를 조용히 버리고 루트 index 를 주지도 않는다.
+                    self.assertEqual(status, 404, path)
+
+    def test_symlink_outside_root_is_refused(self):
+        # 루트 안의 symlink/정션이 루트 밖을 가리키면 404. 심볼릭 링크 권한이 없는 환경은 건너뛴다.
+        with tempfile.TemporaryDirectory() as tmp:
+            outside_file = Path(tmp) / "secret.txt"
+            outside_file.write_text("secret", encoding="utf-8")
+            outside_dir = Path(tmp) / "outside"
+            outside_dir.mkdir()
+            (outside_dir / "index.html").write_text("outside index", encoding="utf-8")
+            (outside_dir / "leak.txt").write_text("leak", encoding="utf-8")
+            root = Path(tmp) / "site"
+            root.mkdir()
+            (root / "index.html").write_text("<html></html>", encoding="utf-8")
+            (root / "inside.txt").write_text("inside", encoding="utf-8")
+            try:
+                os.symlink(outside_file, root / "link.txt")
+                os.symlink(outside_dir, root / "linkdir", target_is_directory=True)
+                os.symlink(root / "inside.txt", root / "inside-link.txt")
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink 을 만들 수 없는 환경: {exc}")
+            with LiveServer(root) as live:
+                status, _, body = live.get("/link.txt")
+                self.assertEqual(status, 404)
+                self.assertNotEqual(body, b"secret")
+                status, _, body = live.get("/linkdir/")
+                self.assertEqual(status, 404)
+                self.assertNotIn(b"outside index", body)
+                status, _, body = live.get("/linkdir/leak.txt")
+                self.assertEqual(status, 404)
+                self.assertNotEqual(body, b"leak")
+                # 루트 안을 가리키는 링크는 정상 제공된다.
+                status, _, body = live.get("/inside-link.txt")
+                self.assertEqual(status, 200)
+                self.assertEqual(body, b"inside")
 
 
 class ServeWebMainTests(unittest.TestCase):

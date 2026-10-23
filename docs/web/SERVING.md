@@ -14,8 +14,8 @@ Taisei 웹 빌드(HTML/JS/WASM/리소스)를 로컬에서 제공하는 명령과
 | WASM MIME | `application/wasm` 제공·검사 확인 |
 | 스레드(pthreads) | 현재 빌드는 사용하지 않음 → COOP/COEP 격리 헤더 불필요(옵션으로 제공) |
 | 리소스 경로 | `data/<sha256>` 상대 경로, 529개 207.1 MiB, 내용 해시 전부 일치 |
-| fixture 테스트 | 39개 통과 (`tests/web-server`) |
-| 실제 산출물 검사 | 평면·중첩 두 배치 모두 통과, 브라우저에서 타이틀 화면까지 로딩 확인 |
+| fixture 테스트 | 43개: Windows 42 통과 + symlink 권한 없어 1 skip, Linux(Docker python:3.12) 43 통과 (`tests/web-server`) |
+| 실제 산출물 검사 | 평면·중첩 두 배치 모두 통과(HTTP 541건), 브라우저에서 타이틀 화면까지 로딩 확인 |
 
 ## 전제: 산출물 구조
 
@@ -65,7 +65,7 @@ python scripts/serve-web.py
 - `.wasm` → `application/wasm`, `.js`/`.mjs` → `text/javascript`, `.html` → `text/html`, 확장자 없는 파일 → `application/octet-stream`. OS의 MIME 레지스트리에 의존하지 않도록 스크립트에 고정했다.
 - 모든 응답에 `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`. 빌드를 갱신한 뒤 새로고침하면 바로 반영된다.
 - 디렉터리 목록을 노출하지 않는다. index 파일이 없는 디렉터리는 404. 슬래시 없는 디렉터리 요청은 301로 `…/`에 안내.
-- `..`·드라이브 문자 등 루트 밖 경로는 루트 안으로 접히므로 루트 밖 파일은 제공되지 않는다.
+- 루트 밖 경로 차단: `..`, 드라이브 문자, Windows 구분자(`%5c`)가 든 요소가 있으면 404. 루트 안의 symlink/정션이 루트 밖을 가리켜도 resolve 결과가 루트 밖이면 404(디렉터리 index 포함).
 - 로컬 개발용이다. HTTP/1.0, Range 요청·압축 미지원. 공개 배포용 서버가 아니다.
 
 오류와 종료 코드:
@@ -102,12 +102,14 @@ python scripts/check-web-assets.py --root build/web/site --url http://127.0.0.1:
 
 HTTP 검사(`--url`):
 
+- 진입 HTML 자체가 200·`text/html`·파일과 같은 길이로 오는지(`--root`와 `--url`이 다른 산출물을 가리키면 여기서 실패).
 - 진입 디렉터리 요청이 `index.html`을 `text/html`로 돌려주는지.
 - 참조된 모든 리소스가 200, 확장자에 맞는 Content-Type, 파일 크기와 같은 본문 길이인지.
 - `data/` 리소스 표본(`--sample-data`, 기본 3, `-1`은 전체)이 200이고 `text/html`이 아닌지(SPA fallback 오설정 검출).
 - 없는 경로와 없는 `.wasm`에 정확히 404를 돌려주는지(HTML fallback이면 `instantiateStreaming` 오류 원인이 숨는다).
 - COOP/COEP: `--require-isolation auto`(기본)는 스레드 사용이 감지될 때만 필수로 본다. `yes`/`no`로 강제할 수 있다.
 - 참고 정보로 `Cache-Control`, `X-Content-Type-Options`를 기록한다.
+- 연결 거부·응답 없이 끊김 같은 요청 실패는 traceback 대신 `http-error` finding으로 기록하고 종료 코드 1로 끝난다.
 
 종료 코드: 0 오류 없음, 1 오류 있음, 2 사용법 오류. `--json`으로 전체 결과(findings, resources, http_checks)를 저장한다.
 
@@ -119,7 +121,14 @@ HTTP 검사(`--url`):
 python -m unittest discover -s tests/web-server -t tests/web-server -v
 ```
 
-결과(2026-10-23, Windows 11, Python 3.12.2): 39개 테스트 통과. 포함 항목: index 제공, WASM/JS MIME, 중첩 상대 경로, 404, `no-store`/`nosniff`, 격리 헤더 on/off, 디렉터리 목록 차단, 경로 탈출 방지, `--index`, 루트 부재·index 부재·포트 충돌 종료 코드, 문서 명령 그대로 자식 프로세스 실행·종료, 검사 도구의 누락·대소문자·절대 경로·루트 탈출·해시 불일치·잘못된 WASM·스레드 빌드 감지·잘못된 MIME 서버·HTML fallback 서버·접속 불가 검출.
+결과(2026-10-23): 43개 테스트.
+
+| 환경 | 결과 |
+| --- | --- |
+| Windows 11, Python 3.12.2 | 42 통과, 1 skip(일반 사용자 권한으로 symlink 생성 불가, WinError 1314) |
+| Linux, Docker `python:3.12-slim`(3.12.15), `docker run --rm -v <clone>:/work -w /work python:3.12-slim python -m unittest discover -s tests/web-server -t tests/web-server` | 43 통과(symlink 테스트 포함) |
+
+포함 항목: index 제공, WASM/JS MIME, 중첩 상대 경로, 404, `no-store`/`nosniff`, 격리 헤더 on/off, 디렉터리 목록 차단, 경로 탈출 방지(`..`, 인코딩 역슬래시, 중첩 상위 경로, 루트 밖 symlink 파일·디렉터리), `--index`, 루트 부재·index 부재·포트 충돌 종료 코드, 문서 명령 그대로 자식 프로세스 실행·종료, 검사 도구의 누락·대소문자(추적 중단, Linux에서도 crash 없음)·절대 경로·루트 탈출·해시 불일치·잘못된 WASM·스레드 빌드 감지·잘못된 MIME 서버·HTML fallback 서버·진입 HTML 404(루트·중첩)·응답 없이 끊는 서버·접속 불가 검출.
 
 ## 실제 게임 산출물 검증
 
@@ -134,7 +143,7 @@ python scripts/serve-web.py --root build/real-taisei-web --port 8765 --quiet
 python scripts/check-web-assets.py --root build/real-taisei-web --url http://127.0.0.1:8765 --verify-hashes --sample-data -1 --json build/web/check-real-flat.json
 ```
 
-결과: **통과 (오류 0, 경고 0)**. HTTP 검사 540건 모두 성공.
+결과: **통과 (오류 0, 경고 0)**. HTTP 검사 541건(진입 페이지 1 + index 1 + 리소스 7 + data 529 + 404 프로브 2 + 격리 헤더 1) 모두 성공. Codex 검토 반영 후 같은 명령으로 재검사해 동일하게 통과했다.
 
 - `index.html → taisei.html → taisei.js → "taisei.wasm"` 참조 체인과 `background.webp`, `scythe.webp`, `favicon.ico`, `COPYING.txt` 존재·대소문자 일치.
 - `taisei.wasm` 유효, 섹션 11개, 공유 메모리 없음 → 스레드 요구 없음, COOP/COEP 불필요.

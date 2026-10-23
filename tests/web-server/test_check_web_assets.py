@@ -22,6 +22,15 @@ import make_fixture
 from _support import FIXTURE_SITE, LiveServer, check_web_assets
 
 
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    """오동작 서버를 흉내 내는 테스트용 기본 핸들러(로그 없음, .wasm MIME 은 올바름)."""
+
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".wasm": "application/wasm"}
+
+    def log_message(self, *args):
+        pass
+
+
 def run_check(argv: list[str]) -> tuple[int, str]:
     out = io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -98,7 +107,15 @@ class StaticScanTests(unittest.TestCase):
             html = root / "game" / "game.html"
             html.write_text(html.read_text(encoding="utf-8").replace('src="game.js"', 'src="Game.JS"'), encoding="utf-8")
         root = self.mutated_fixture(mutate)
-        self.assertIn("case-mismatch", codes(static_report(root)))
+        report = static_report(root)
+        self.assertIn("case-mismatch", codes(report))
+        # 깨진 참조는 추적하지 않으므로 리소스 목록에도, 열어 보는 대상에도 들어가지 않는다(Linux 에서 crash 하던 경로).
+        self.assertNotIn("game/Game.JS", report.resources)
+        # CLI 와 HTTP 검사까지 traceback 없이 종료 코드 1 로 끝난다.
+        with LiveServer(root) as live:
+            code, text = run_check(["--root", str(root), "--url", live.url])
+        self.assertEqual(code, check_web_assets.EXIT_FINDINGS, text)
+        self.assertNotIn("Traceback", text)
 
     def test_absolute_path_reported(self):
         def mutate(root: Path):
@@ -218,6 +235,68 @@ class LiveScanTests(unittest.TestCase):
         code, text = run_check(["--root", str(FIXTURE_SITE), "--url", "http://127.0.0.1:9"])
         self.assertEqual(code, check_web_assets.EXIT_FINDINGS, text)
         self.assertIn("server-unreachable", text)
+
+    def run_against_handler(self, handler_cls, argv_extra):
+        handler = functools.partial(handler_cls, directory=str(FIXTURE_SITE))
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_address[1]}"
+            return run_check(["--root", str(FIXTURE_SITE), "--url", url, *argv_extra])
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_entry_404_fails_even_when_other_assets_are_fine(self):
+        # '/' 와 나머지 자산은 정상이지만 '/index.html' 자체만 404 인 서버.
+        class EntryMissingHandler(_QuietHandler):
+            def send_head(self):
+                if self.path.split("?")[0] == "/index.html":
+                    self.send_error(404, "File not found")
+                    return None
+                return super().send_head()
+
+        code, text = self.run_against_handler(EntryMissingHandler, [])
+        self.assertEqual(code, check_web_assets.EXIT_FINDINGS, text)
+        self.assertIn("entry-http", text)
+        self.assertIn("status 404", text)
+
+    def test_nested_entry_404_fails(self):
+        # --entry game/game.html 이 404 면 실패해야 한다.
+        class GameMissingHandler(_QuietHandler):
+            def send_head(self):
+                if self.path.split("?")[0] == "/game/game.html":
+                    self.send_error(404, "File not found")
+                    return None
+                return super().send_head()
+
+        code, text = self.run_against_handler(GameMissingHandler, ["--entry", "game/game.html"])
+        self.assertEqual(code, check_web_assets.EXIT_FINDINGS, text)
+        self.assertIn("entry-http", text)
+
+    def test_connection_dropped_mid_check_is_reported_not_raised(self):
+        # 첫 연결 확인 뒤 .wasm 요청에서 응답 없이 연결을 끊는 서버: traceback 대신 finding 으로 끝나야 한다.
+        class DropHandler(_QuietHandler):
+            def handle_one_request(self):
+                self.raw_requestline = self.rfile.readline(65537)
+                if not self.raw_requestline:
+                    self.close_connection = True
+                    return
+                if not self.parse_request():
+                    return
+                if self.path.endswith(".wasm"):
+                    # 응답 없이 연결만 닫는다(서버 쪽 예외 없이).
+                    self.close_connection = True
+                    return
+                getattr(self, "do_" + self.command)()
+                self.wfile.flush()
+
+        code, text = self.run_against_handler(DropHandler, [])
+        self.assertEqual(code, check_web_assets.EXIT_FINDINGS, text)
+        self.assertIn("http-error", text)
+        self.assertIn("game/game.wasm", text)
+        self.assertNotIn("Traceback", text)
 
 
 class WasmInspectTests(unittest.TestCase):

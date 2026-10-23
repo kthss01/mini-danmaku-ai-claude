@@ -29,6 +29,7 @@ import argparse
 import errno
 import functools
 import http.server
+import os
 import posixpath
 import sys
 import urllib.parse
@@ -93,11 +94,25 @@ class WebAssetsHandler(http.server.SimpleHTTPRequestHandler):
         self.index_name = index_name
         self.cross_origin_isolation = cross_origin_isolation
         self.quiet = quiet
+        # 심볼릭 링크·정션을 따라간 최종 경로가 이 안에 있어야만 제공한다.
+        self.root_resolved = Path(kwargs.get("directory") or os.getcwd()).resolve()
+        # BaseHTTPRequestHandler.__init__ 은 요청 처리까지 수행하므로 위 속성을 먼저 둔다.
         super().__init__(*args, **kwargs)
+
+    def is_inside_root(self, path: str) -> bool:
+        """경로를 resolve 한 결과가 루트 안인지 확인한다(symlink/junction 로 루트 밖을 가리키면 거부)."""
+        try:
+            real = Path(path).resolve()
+        except (OSError, RuntimeError):
+            return False
+        return real == self.root_resolved or self.root_resolved in real.parents
 
     def send_head(self):
         # 디렉터리 요청은 index 파일이 있을 때만 제공한다. 목록 출력은 하지 않는다.
         path = self.translate_path(self.path)
+        if getattr(self, "path_rejected", False) or not self.is_inside_root(path):
+            self.send_error(http.HTTPStatus.NOT_FOUND, "File not found")
+            return None
         if Path(path).is_dir():
             parts = urllib.parse.urlsplit(self.path)
             if not parts.path.endswith("/"):
@@ -109,7 +124,7 @@ class WebAssetsHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 return None
             index = Path(path) / self.index_name
-            if not index.is_file():
+            if not index.is_file() or not self.is_inside_root(str(index)):
                 self.send_error(http.HTTPStatus.NOT_FOUND, "File not found")
                 return None
             # 표준 핸들러는 index.html/index.htm 만 알므로 설정된 index 파일로 경로를 바꿔 준다.
@@ -134,11 +149,16 @@ class WebAssetsHandler(http.server.SimpleHTTPRequestHandler):
         path = posixpath.normpath(path)
         words = [w for w in path.split("/") if w]
         result = Path(self.directory)
+        # 거부한 요소가 하나라도 있으면 send_head 가 404 를 보낸다(표준 핸들러처럼 조용히 버리고 루트를 주지 않는다).
+        self.path_rejected = False
         for word in words:
-            # 드라이브·상위 디렉터리 요소를 제거해 루트 밖으로 나가지 못하게 한다.
-            if Path(word).is_absolute() or word in (".", ".."):
+            # 드라이브·상위 디렉터리·OS 구분자(Windows 의 '\')가 든 요소는 루트 밖으로 나갈 수 있으므로 거부한다.
+            if os.path.dirname(word) or word in (os.curdir, os.pardir, ".", ".."):
+                self.path_rejected = True
                 continue
-            if word.split(":")[0] != word:
+            drive, _ = os.path.splitdrive(word)
+            if drive or ":" in word or "\\" in word or Path(word).is_absolute():
+                self.path_rejected = True
                 continue
             result = result / word
         if trailing_slash:

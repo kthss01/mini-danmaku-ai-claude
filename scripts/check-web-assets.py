@@ -324,9 +324,11 @@ def scan_static(report: Report, root: Path, entry: str, data_dir_name: str, veri
             report.error("missing-file", f"'{value}' ({kind}) 가 가리키는 파일이 없습니다: {rel}", base_rel)
             return None
         if not exact:
+            # 참조는 깨진 것으로 보고 추적을 멈춘다(Linux 에서는 실제로 열 수 없는 경로다).
             report.error("case-mismatch",
                          f"'{value}' 는 실제 파일 이름과 대소문자가 다릅니다. Windows 에서는 열리지만 대소문자를 구분하는 서버에서는 404 가 됩니다.",
                          base_rel)
+            return None
         if (root / rel).is_dir():
             return rel
         seen_resources.add(rel)
@@ -496,87 +498,91 @@ def scan_live(report: Report, root: Path, base_url: str, entry: str, isolation_m
             "note": note,
         })
 
+    def fetch(check: str, rel: str, url: str) -> tuple[int, dict[str, str], bytes] | None:
+        """요청 실패(연결 거부·끊김·잘못된 응답)를 traceback 대신 finding 으로 남긴다."""
+        try:
+            return http_get(url)
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
+            report.error("http-error", f"요청 실패 {url}: {exc}", rel)
+            record(check, rel, url, 0, False, f"요청 실패: {exc}")
+            return None
+
     # 서버 연결 확인
     try:
-        status, headers, body = http_get(base + "/")
-    except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+        http_get(base + "/")
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         report.error("server-unreachable", f"{base}/ 에 연결할 수 없습니다: {exc}")
+        record("server", "", base + "/", 0, False, str(exc))
         return
+
+    def expect_file(check: str, rel: str, expected_types: set[str] | None, verify_hash: bool = False) -> bool:
+        """rel 이 200·기대 MIME·파일과 같은 길이로 제공되는지 확인하고 결과를 기록한다."""
+        url = url_for(rel)
+        file_path = root / rel
+        if not file_path.is_file():
+            report.error("resource-missing", "정적 검사 단계에서 사라진 파일입니다.", rel)
+            record(check, rel, url, 0, False, "파일 없음")
+            return False
+        response = fetch(check, rel, url)
+        if response is None:
+            return False
+        status, headers, body = response
+        problems: list[str] = []
+        if status != 200:
+            problems.append(f"status {status}")
+        actual = content_type_main(headers)
+        if expected_types is not None and actual not in expected_types:
+            problems.append(f"Content-Type '{actual or '없음'}' (기대: {' 또는 '.join(sorted(expected_types))})")
+        elif expected_types is None and actual == "text/html":
+            problems.append("Content-Type 이 text/html (SPA fallback 등으로 잘못된 내용이 전달됨)")
+        size = file_path.stat().st_size
+        if status == 200 and len(body) != size:
+            problems.append(f"본문 {len(body)} bytes ≠ 파일 {size} bytes")
+        if status == 200 and verify_hash and hashlib.sha256(body).hexdigest() != file_path.name:
+            problems.append("응답 본문 SHA-256 이 파일 이름과 다릅니다")
+        record(check, rel, url, status, not problems, "; ".join(problems), headers)
+        if problems:
+            report.error(f"{check}-http", "; ".join(problems), rel)
+        return not problems
+
+    # 0) 진입 HTML 자체: 참조 목록에는 없으므로 따로 200·text/html·본문 길이를 확인한다.
+    if expect_file("entry", entry, EXPECTED_CONTENT_TYPES[".html"]):
+        report.info("entry-http", f"{url_for(entry)} → 200 text/html 확인", entry)
 
     # 1) 진입 디렉터리의 index 제공
     entry_dir = posixpath.dirname(entry)
     entry_dir_url = base + "/" + (urllib.parse.quote(entry_dir) + "/" if entry_dir else "")
-    index_exists = (root / entry_dir / "index.html").is_file() if entry_dir else (root / "index.html").is_file()
-    status, headers, body = http_get(entry_dir_url)
-    if index_exists:
-        ok = status == 200 and content_type_main(headers) == "text/html"
-        record("directory-index", entry_dir + "/", entry_dir_url, status, ok, headers=headers)
-        if not ok:
-            report.error("directory-index",
-                         f"{entry_dir_url} 가 index.html 을 text/html 로 돌려주지 않습니다(status {status}, {content_type_main(headers) or '없음'}).")
+    index_exists = (root / entry_dir / "index.html").is_file()
+    response = fetch("directory-index", entry_dir + "/", entry_dir_url)
+    if response is not None:
+        status, headers, body = response
+        if index_exists:
+            ok = status == 200 and content_type_main(headers) == "text/html"
+            record("directory-index", entry_dir + "/", entry_dir_url, status, ok, headers=headers)
+            if not ok:
+                report.error("directory-index",
+                             f"{entry_dir_url} 가 index.html 을 text/html 로 돌려주지 않습니다"
+                             f"(status {status}, {content_type_main(headers) or '없음'}).")
+            else:
+                report.info("directory-index", f"{entry_dir_url} → index.html 제공 확인")
         else:
-            report.info("directory-index", f"{entry_dir_url} → index.html 제공 확인")
-    else:
-        ok = status != 200
-        record("directory-no-listing", entry_dir + "/", entry_dir_url, status, ok, headers=headers)
-        if not ok:
-            report.warning("directory-listing",
-                           f"{entry_dir_url} 에 index.html 이 없는데 200 을 돌려줍니다(디렉터리 목록 노출 가능).")
+            ok = status != 200
+            record("directory-no-listing", entry_dir + "/", entry_dir_url, status, ok, headers=headers)
+            if not ok:
+                report.warning("directory-listing",
+                               f"{entry_dir_url} 에 index.html 이 없는데 200 을 돌려줍니다(디렉터리 목록 노출 가능).")
 
     # 2) 모든 참조 리소스
     for rel in report.resources:
-        url = url_for(rel)
-        try:
-            status, headers, body = http_get(url)
-        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
-            report.error("http-error", f"요청 실패: {exc}", rel)
-            record("resource", rel, url, 0, False, str(exc))
-            continue
-        problems: list[str] = []
-        if status != 200:
-            problems.append(f"status {status}")
         ext = posixpath.splitext(rel)[1].lower()
-        expected = EXPECTED_CONTENT_TYPES.get(ext)
-        actual = content_type_main(headers)
-        if expected is not None and actual not in expected:
-            problems.append(f"Content-Type '{actual or '없음'}' (기대: {' 또는 '.join(sorted(expected))})")
-        size = (root / rel).stat().st_size
-        if status == 200 and len(body) != size:
-            problems.append(f"본문 {len(body)} bytes ≠ 파일 {size} bytes")
-        ok = not problems
-        record("resource", rel, url, status, ok, "; ".join(problems), headers)
-        if ok:
-            continue
-        level = "error"
-        report.add(level, "resource-http", "; ".join(problems), rel)
+        expect_file("resource", rel, EXPECTED_CONTENT_TYPES.get(ext))
 
-    # 3) 리소스 디렉터리 표본(또는 전체) 요청: 확장자 없는 파일이 그대로 전달되는지
+    # 3) 리소스 디렉터리 표본(또는 전체): 확장자 없는 파일이 그대로 전달되는지
     for data_rel, stats in report.data_dirs.items():
         files = sorted(p for p in (root / data_rel).iterdir() if p.is_file())
         chosen = files if sample_data < 0 else files[:sample_data]
         for p in chosen:
-            rel = f"{data_rel}/{p.name}"
-            url = url_for(rel)
-            try:
-                status, headers, body = http_get(url)
-            except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
-                report.error("http-error", f"요청 실패: {exc}", rel)
-                record("data", rel, url, 0, False, str(exc))
-                continue
-            problems = []
-            if status != 200:
-                problems.append(f"status {status}")
-            actual = content_type_main(headers)
-            if actual == "text/html":
-                problems.append("Content-Type 이 text/html (SPA fallback 등으로 잘못된 내용이 전달됨)")
-            if status == 200 and len(body) != p.stat().st_size:
-                problems.append(f"본문 {len(body)} bytes ≠ 파일 {p.stat().st_size} bytes")
-            if status == 200 and verify_hashes and hashlib.sha256(body).hexdigest() != p.name:
-                problems.append("응답 본문 SHA-256 이 파일 이름과 다릅니다")
-            ok = not problems
-            record("data", rel, url, status, ok, "; ".join(problems), headers)
-            if not ok:
-                report.error("data-http", "; ".join(problems), rel)
+            expect_file("data", f"{data_rel}/{p.name}", None, verify_hash=verify_hashes)
         label = "전체" if sample_data < 0 else f"표본 {len(chosen)}개"
         report.info("data-http", f"{data_rel}/ 리소스 {label} 요청 확인", data_rel)
 
@@ -585,7 +591,10 @@ def scan_live(report: Report, root: Path, base_url: str, entry: str, isolation_m
     for probe in (f"__check_missing_{token}", f"__check_missing_{token}.wasm"):
         rel = posixpath.join(entry_dir, probe) if entry_dir else probe
         url = url_for(rel)
-        status, headers, body = http_get(url)
+        response = fetch("not-found", rel, url)
+        if response is None:
+            continue
+        status, headers, body = response
         ok = status == 404
         record("not-found", rel, url, status, ok, headers=headers)
         if not ok:
@@ -598,7 +607,10 @@ def scan_live(report: Report, root: Path, base_url: str, entry: str, isolation_m
     else:
         required = isolation_mode == "yes"
     report.isolation_required = required
-    status, headers, body = http_get(url_for(entry))
+    response = fetch("isolation", entry, url_for(entry))
+    if response is None:
+        return
+    status, headers, body = response
     coop = headers.get("cross-origin-opener-policy", "")
     coep = headers.get("cross-origin-embedder-policy", "")
     isolated = coop == "same-origin" and coep in ("require-corp", "credentialless")
