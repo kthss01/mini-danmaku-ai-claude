@@ -92,6 +92,55 @@ function Write-JsonFile {
     return $json
 }
 
+function Get-DataManifest {
+    # install/data의 파일 이름 → {bytes, sha256} 목록. 이름순으로 정렬해 비교가 결정적이도록 한다.
+    param([string]$DataPath)
+    $manifest = [ordered]@{}
+    foreach ($file in @(Get-ChildItem -LiteralPath $DataPath -File | Sort-Object Name)) {
+        $manifest[$file.Name] = [ordered]@{
+            bytes  = $file.Length
+            sha256 = Get-Sha256 $file.FullName
+        }
+    }
+    return $manifest
+}
+
+function Test-InstallData {
+    # install/data가 빌드 출처에 기록된 목록과 정확히 같은지(누락·추가·크기·내용) 확인한다.
+    # 약 207 MiB를 모두 읽어 해시하므로 수 초가 걸리지만, 잘못된 산출물을 성공으로 패키징하는 것보다 낫다.
+    param([string]$DataPath, $Recorded)
+    if (-not (Test-Path -LiteralPath $DataPath -PathType Container)) {
+        throw 'build/web/install/data is missing or is not a directory. Rebuild with -Force.'
+    }
+    # 이전 형식의 출처 기록에는 data 목록이 없다. 출처 미확인으로 보고 거부한다.
+    if ($null -eq $Recorded) {
+        throw 'install-provenance.json has no data manifest (older format), so build/web/install/data cannot be verified. Rebuild with -Force.'
+    }
+    $expected = @($Recorded.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($expected.Count -eq 0) {
+        throw 'install-provenance.json has an empty data manifest. Rebuild with -Force.'
+    }
+    $actual = @(Get-ChildItem -LiteralPath $DataPath -File | Sort-Object Name)
+    $actualNames = @($actual | ForEach-Object { $_.Name })
+    $missing = @($expected | Where-Object { $actualNames -notcontains $_ })
+    $extra = @($actualNames | Where-Object { $expected -notcontains $_ })
+    if ($missing.Count -gt 0 -or $extra.Count -gt 0) {
+        $detail = @()
+        if ($missing.Count -gt 0) { $detail += "missing $($missing.Count) (e.g. $($missing[0]))" }
+        if ($extra.Count -gt 0) { $detail += "unexpected $($extra.Count) (e.g. $($extra[0]))" }
+        throw "build/web/install/data does not match install-provenance.json: $($detail -join '; '). Rebuild with -Force."
+    }
+    foreach ($file in $actual) {
+        $record = $Recorded.($file.Name)
+        if ($file.Length -ne $record.bytes) {
+            throw "build/web/install/data/$($file.Name) size differs from install-provenance.json. Rebuild with -Force."
+        }
+        if ((Get-Sha256 $file.FullName) -ne $record.sha256) {
+            throw "build/web/install/data/$($file.Name) content differs from install-provenance.json. Rebuild with -Force."
+        }
+    }
+}
+
 if (-not (Test-Path -LiteralPath (Join-Path $taiseiPath '.git'))) {
     throw 'game/taisei is missing. Run git submodule update --init --recursive and scripts/setup-taisei.ps1 first.'
 }
@@ -160,6 +209,15 @@ if (-not $PackageOnly) {
     foreach ($name in $trackedInstallFiles) {
         $installOutputs[$name] = Get-Sha256 (Join-Path $installPath $name)
     }
+    # data/는 콘텐츠 주소 방식(파일 이름 = 내용 SHA-256)이지만, 이름에 의존하지 않고 전체 목록과 해시를 그대로 기록한다.
+    $dataManifest = Get-DataManifest $installDataPath
+    $dataContentAddressed = $true
+    # Windows PowerShell 5.1의 Measure-Object는 해시테이블 키를 속성으로 읽지 못하므로 직접 합산한다.
+    [long]$dataTotalBytes = 0
+    foreach ($entry in $dataManifest.GetEnumerator()) {
+        if ($entry.Key -ne $entry.Value.sha256) { $dataContentAddressed = $false }
+        $dataTotalBytes += $entry.Value.bytes
+    }
     # 컴파일에 성공한 경우에만 install과 짝을 이루는 빌드 출처를 기록한다.
     $buildRecord = [ordered]@{
         schema                     = 1
@@ -173,7 +231,10 @@ if (-not $PackageOnly) {
         emscriptenVersion          = $emVersion
         buildImage                 = $image
         installSha256              = $installOutputs
-        dataFileCount              = @(Get-ChildItem -LiteralPath $installDataPath -File).Count
+        dataFileCount              = $dataManifest.Count
+        dataTotalBytes             = $dataTotalBytes
+        dataContentAddressed       = $dataContentAddressed
+        dataSha256                 = $dataManifest
     }
     Write-JsonFile $provenancePath $buildRecord | Out-Null
 }
@@ -195,6 +256,8 @@ foreach ($name in $trackedInstallFiles) {
         throw "build/web/install/$name does not match install-provenance.json. Rebuild with -Force."
     }
 }
+# data/ 누락·추가·변조를 모두 확인한다. 실패하면 기존 site는 그대로 남는다.
+Test-InstallData (Join-Path $installPath 'data') $provenance.dataSha256
 
 # 3. 패키징: site를 매번 새로 구성한다(생성 디렉터리이므로 안전하게 교체).
 # 로컬 서버가 site를 작업 디렉터리로 잡고 있어도 동작하도록 디렉터리 자체가 아닌 내용물만 지운다.
@@ -230,18 +293,29 @@ foreach ($name in $requiredGameFiles) {
 }
 
 # 4. 빌드 정보 기록: 빌드 출처(build)와 이번 패키징 정보(packaging)를 분리한다.
+# 진입점: 세션 3의 게임 셸(game/index.html)이 있으면 그것, 없으면 업스트림 셸(game/taisei.html).
+$entry = 'game/taisei.html'
+if (Test-Path -LiteralPath (Join-Path $siteGamePath 'index.html')) {
+    $entry = 'game/index.html'
+}
 $siteHashes = [ordered]@{}
-foreach ($relative in @('index.html', 'COPYING.txt', 'game/taisei.html', 'game/taisei.js', 'game/taisei.wasm', 'game/COPYING.txt')) {
+foreach ($relative in @('index.html', 'COPYING.txt', 'game/index.html', 'game/shell.js', 'game/shell.css', 'game/shell-config.js', 'game/taisei.html', 'game/taisei.js', 'game/taisei.wasm', 'game/COPYING.txt')) {
     $file = Join-Path $sitePath $relative
     if (Test-Path -LiteralPath $file) {
         $siteHashes[$relative] = Get-Sha256 $file
     }
 }
-$siteFiles = @(Get-ChildItem -LiteralPath $sitePath -Recurse -File)
+# web/에서 복사한 셸 파일 전체의 해시. web/와 site/의 상대 경로가 같으므로 그대로 대응한다.
+$shellHashes = [ordered]@{}
 $webShellDirty = @()
 if ($webShellPresent) {
     $webShellDirty = Get-GitDirtyEntries $repoRoot @('web')
+    foreach ($file in @(Get-ChildItem -LiteralPath $webSourceDir -Recurse -File | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($webSourceDir.Length + 1).Replace('\', '/')
+        $shellHashes[$relative] = Get-Sha256 (Join-Path $sitePath $relative)
+    }
 }
+$siteFiles = @(Get-ChildItem -LiteralPath $sitePath -Recurse -File)
 $info = [ordered]@{
     schema    = 1
     build     = $provenance
@@ -252,15 +326,27 @@ $info = [ordered]@{
         repositoryDirtyEntries = Get-GitDirtyEntries $repoRoot
         webShellPresent        = $webShellPresent
         webShellDirtyEntries   = $webShellDirty
+        webShellSha256         = $shellHashes
     }
     site      = [ordered]@{
-        entry               = 'game/taisei.html'
-        fileCountExcludingBuildInfo = $siteFiles.Count
+        entry                        = $entry
+        fileCountExcludingBuildInfo  = $siteFiles.Count
         totalBytesExcludingBuildInfo = ($siteFiles | Measure-Object -Property Length -Sum).Sum
-        sha256              = $siteHashes
+        sha256                       = $siteHashes
     }
 }
 $infoJson = Write-JsonFile (Join-Path $sitePath 'build-info.json') $info
 
-Write-Host "Packaged Taisei web $($provenance.taiseiCommit) (emscripten $($provenance.emscriptenVersion)) into build/web/site"
-Write-Host $infoJson
+Write-Host "Packaged Taisei web $($provenance.taiseiCommit) (emscripten $($provenance.emscriptenVersion)) into build/web/site (entry: $entry)"
+# data 목록은 길어서 콘솔에는 요약만 출력한다. 전체 내용은 build-info.json에 있다.
+$summary = [ordered]@{
+    build     = [ordered]@{
+        taiseiCommit = $provenance.taiseiCommit; repositoryCommit = $provenance.repositoryCommit
+        buildStartedAtUtc = $provenance.buildStartedAtUtc; emscriptenVersion = $provenance.emscriptenVersion
+        dataFileCount = $provenance.dataFileCount; dataTotalBytes = $provenance.dataTotalBytes
+        installSha256 = $provenance.installSha256
+    }
+    packaging = $info.packaging
+    site      = $info.site
+}
+Write-Host ($summary | ConvertTo-Json -Depth 8)

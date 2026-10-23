@@ -42,8 +42,8 @@ Set-Location mini-danmaku-ai-claude
 
 1. `configs/web-build/container-build.sh`를 LF로 정규화해 `build/web/.container-build.sh`에 쓴다.
 2. 컨테이너에서 emsdk를 설치·활성화하고, `game/taisei`를 LF로 다시 checkout해 Meson으로 빌드한다.
-3. `meson install` 결과를 `build/web/install`에 두고, 컴파일 성공 시에만 `build/web/install-provenance.json`에 빌드 출처를 기록한다.
-4. 출처 기록과 install의 `taisei.html`, `taisei.js`, `taisei.wasm`, `COPYING.txt` 해시가 일치하는지 확인한다.
+3. `meson install` 결과를 `build/web/install`에 두고, 컴파일 성공 시에만 `build/web/install-provenance.json`에 빌드 출처(`data/` 전체 목록 포함)를 기록한다.
+4. 출처 기록과 install의 `taisei.html`, `taisei.js`, `taisei.wasm`, `COPYING.txt` 해시, 그리고 `data/` 전체 목록·크기·해시가 일치하는지 확인한다. 실패하면 기존 `site/`를 보존한다.
 5. `build/web/site`를 구성하고 필수 파일이 없으면 실패한다. `build-info.json`에 빌드 출처와 이번 패키징 정보를 분리해 기록한다.
 
 ### 빌드 출처와 패키징 정보
@@ -52,12 +52,26 @@ Set-Location mini-danmaku-ai-claude
 
 | 파일 | 기록 시점 | 내용 |
 | --- | --- | --- |
-| `build/web/install-provenance.json` | 컴파일 성공 시 | 빌드 시작·종료 시각(UTC), Taisei 커밋, 메인 커밋, 양쪽 작업 트리의 미커밋 변경 목록, 빌드 입력 파일 해시, emsdk 버전, 이미지, install 파일 SHA-256, `data/` 파일 수 |
-| `build/web/site/build-info.json` | 패키징할 때마다 | `build`(위 출처 기록 그대로), `packaging`(패키징 시각, 모드, 현재 메인 커밋, 미커밋 변경, `web/` 존재 여부와 변경), `site`(진입 URL, 파일 수, 용량, 주요 파일 SHA-256) |
+| `build/web/install-provenance.json` | 컴파일 성공 시 | 빌드 시작·종료 시각(UTC), Taisei 커밋, 메인 커밋, 양쪽 작업 트리의 미커밋 변경 목록, 빌드 입력 파일 해시, emsdk 버전, 이미지, install 파일 SHA-256, `data/` 전체 목록(파일별 크기·SHA-256)과 파일 수·총 용량 |
+| `build/web/site/build-info.json` | 패키징할 때마다 | `build`(위 출처 기록 그대로), `packaging`(패키징 시각, 모드, 현재 메인 커밋, 미커밋 변경, `web/` 존재 여부·변경·복사한 셸 파일 전체 SHA-256), `site`(진입 URL, 파일 수, 용량, 주요 파일 SHA-256) |
 
-- 출처 기록이 없는 install(이 변경 이전에 만든 것 포함)은 패키징을 거부한다. `-Force`로 다시 빌드한다.
+- 출처 기록이 없거나 `data/` 목록이 없는 install(이 변경 이전에 만든 것 포함)은 패키징을 거부한다. `-Force`로 다시 빌드한다.
+- 패키징 전 검사는 기존 `site/`를 지우기 전에 수행한다. 검사에 실패하면 기존 `site/`는 그대로 남는다.
 - 라이선스 고지는 현재 작업 트리가 아니라 install에 포함된 그 빌드의 `COPYING.txt`를 복사한다.
 - `build.buildStartedAtUtc`가 실제 빌드 시각이다. 파일 수정 시각은 복사 시점이므로 빌드 시각으로 쓰지 않는다.
+
+### `data/` 무결성 검사
+
+- 빌드 시 `data/` 파일 529개의 이름·크기·SHA-256을 모두 출처 기록에 저장한다. 파일 이름이 내용의 SHA-256과 같은 콘텐츠 주소 방식이지만(`dataContentAddressed`로 기록), 검사는 이름에 의존하지 않고 저장한 해시와 비교한다.
+- 패키징 전(`-PackageOnly` 포함) `data/`가 디렉터리인지, 누락·추가 파일이 없는지, 파일별 크기와 SHA-256이 기록과 같은지 확인한다. 하나라도 다르면 실패하고 `site/`를 건드리지 않는다.
+- 비용: 정상 패키징 때마다 약 207 MiB를 모두 읽어 해시한다. 이 PC에서 `-PackageOnly` 전체(검사·복사·기록 포함)가 약 10초 걸렸다. 크기·이름만 비교하는 방식은 내용 변조를 잡지 못하므로 채택하지 않았다.
+- 폴더·파일 누락과 추가는 해시 계산 전에 목록 비교로 먼저 걸러진다.
+
+### 진입점과 셸 해시
+
+- `site/game/index.html`(세션 3의 `web/game/` 셸)이 있으면 `site.entry`를 `game/index.html`로, 없으면 업스트림 셸 `game/taisei.html`로 기록한다.
+- `site.sha256`에는 `index.html`, `COPYING.txt`, `game/index.html`, `game/shell.js`, `game/shell.css`, `game/shell-config.js`, `game/taisei.html`, `game/taisei.js`, `game/taisei.wasm`, `game/COPYING.txt` 중 존재하는 파일의 해시를 기록한다.
+- `packaging.webShellSha256`에는 `web/`에서 복사한 모든 파일의 해시를 상대 경로별로 기록한다. `web/`와 `site/`의 상대 경로가 같으므로 미커밋 `web/game/` 내용도 특정할 수 있다.
 
 ## 산출물 계약
 
@@ -81,7 +95,8 @@ build/web/
 
 - `web/`가 있으면 `web/game/`을 제외한 파일을 `site/` 루트로, `web/game/` 아래 파일을 `site/game/`으로 덮어쓴다.
 - `web/`가 없으면 업스트림 게임 셸만 패키징하고 그 사실을 출력한다.
-- 게임 진입 URL은 서빙 루트 기준 `game/taisei.html`이다.
+- 게임 진입 URL은 서빙 루트 기준 `game/index.html`(세션 3 셸이 있을 때) 또는 `game/taisei.html`(업스트림 셸만 있을 때)이다. 실제 값은 `build-info.json`의 `site.entry`에 기록된다.
+- 루트 셸이 없을 때 서버의 기본 문서 옵션으로 `game/`을 다시 붙이면 `game/game/` 경로가 된다. 이 경우 서빙 루트를 `build/web/site`로 두고 `/game/taisei.html`을 직접 연다.
 
 ### 로더 제약
 
@@ -122,27 +137,27 @@ build/web/
 
 위 표는 출처 기록을 도입하기 전 스크립트(메인 커밋 `f3b52f1`)로 만든 결과다.
 
-### 출처 기록 도입 후 재빌드
+### 출처·`data/` 기록 도입 후 재빌드 (최신)
 
-같은 clone에서 `.\scripts\build-web.ps1 -Force`로 다시 컴파일했다(메인 작업 트리에 `scripts/build-web.ps1` 수정이 있는 상태였고, 출처 기록에 그 사실이 남았다).
+같은 clone에서 `.\scripts\build-web.ps1 -Force`로 다시 컴파일했다. 메인 커밋 `d5f0bbd`에 `scripts/build-web.ps1`, `docs/web/BUILD.md` 미커밋 수정이 있는 상태였고, 출처 기록에 그 사실이 남았다.
 
 | 항목 | 결과 |
 | --- | --- |
 | 종료 코드 | 0 |
-| 소요 시간 | 4분 33초 (emsdk 캐시 사용) |
-| 빌드 시각(UTC) | 시작 `2026-10-23T11:52:05Z`, 종료 `2026-10-23T11:56:24Z` |
+| 소요 시간 | 4분 7초 (emsdk 캐시 사용) |
+| 빌드 시각(UTC) | 시작 `2026-10-23T12:14:42Z`, 종료 `2026-10-23T12:18:32Z` |
 | `site/` 파일 수 | 544 (`build-info.json` 제외, `web/` 없음) |
 | `site/` 총 용량 | 222,368,303 바이트 (`build-info.json` 제외) |
-| `data/` 파일 수 | 529 |
+| `data/` | 529개, 217,186,447 바이트, 콘텐츠 주소 일치(`dataContentAddressed=true`) |
 
 | 파일 | 크기 (바이트) | SHA-256 |
 | --- | --- | --- |
-| `game/taisei.wasm` | 4,538,726 | `239e03807d18bc5f1ecd4123bbbb1784bad95e8a9766eb7601aa1472b9440a1c` |
+| `game/taisei.wasm` | 4,538,726 | `26ce2883419ad0f0b3e055c96108c80eb510abe3a905d6689c78efddb2067b64` |
 | `game/taisei.js` | 100,933 | `3e7ed5b785d039c22c67bb87a70b36ee01d3b96202ff715643d7e97eb33c8d64` |
 | `game/taisei.html` | 12,168 | `113240a898a555b79b8dcfa49c75fe5aa89a68831c377431347e8127ca3ac555` |
 | `COPYING.txt` | 2,529 | `507ba6eaceaf6fd923246480f53932b25a1ebbb25b2dd19c4f37bfc5fc83795a` |
 
-같은 Taisei 커밋으로 세 번 빌드한 결과를 비교하면 `taisei.js`, `taisei.html`, `data/` 파일 이름 529개는 모두 같았고, `taisei.wasm`만 크기는 같은데 해시가 매번 달랐다(`eb97b68b…`, `68e8638c…`, `239e0380…`). 바이트 단위 재현성은 보장하지 않는 것으로 기록한다.
+같은 Taisei 커밋으로 네 번 빌드한 결과를 비교하면 `taisei.js`, `taisei.html`, `data/` 파일 이름 529개는 모두 같았고, `taisei.wasm`만 크기는 같은데 해시가 매번 달랐다(`eb97b68b…`, `68e8638c…`, `239e0380…`, `26ce2883…`). 바이트 단위 재현성은 보장하지 않는 것으로 기록한다.
 
 ### 스크립트 동작 확인
 
@@ -158,6 +173,19 @@ build/web/
 | 메인 커밋 `f3b52f1`에서 빌드 → 스크립트 커밋 `dad358e`로 HEAD 변경 + 임시 `web/` 추가 → `-PackageOnly` | 성공. `build.repositoryCommit`은 `f3b52f1` 유지, `packaging.repositoryCommit`은 `dad358e`, `packaging.mode`는 `PackageOnly`, `webShellDirtyEntries`에 `?? web/` 기록. `install-provenance.json` 해시 불변 |
 | `install/taisei.html` 끝에 주석 추가 후 `-PackageOnly` | `does not match install-provenance.json` 오류로 거부 |
 | 원본 복원·`web/` 삭제 후 `-PackageOnly` | 성공. 544개 파일, 222,368,303바이트 |
+
+`data/` 무결성 시나리오(최신 재빌드 후 이 clone에서 수행). 각 시나리오 뒤 원상 복구했고, "site 보존"은 `site/` 파일 수와 `build-info.json` 해시가 실행 전후 같았다는 뜻이다.
+
+| 시나리오 | 결과 |
+| --- | --- |
+| `data/` 이전 형식(목록 없음) 출처 기록 + `-PackageOnly` | 거부 |
+| `install/data` 폴더 이름 변경(누락) | `data is missing or is not a directory`로 거부, site 보존 |
+| `data/` 파일 1개 이동(누락) | `missing 1`로 거부, site 보존 |
+| `data/` 파일 1개 첫 바이트 반전(이름·크기 동일) | `content differs`로 거부, site 보존 |
+| 기록에 없는 `data/deadbeef` 추가 | `unexpected 1`로 거부, site 보존 |
+| 원상 복구 후 `-PackageOnly` | 성공, 약 10초 |
+| 임시 `web/index.html`, `web/game/index.html`, `shell.js`, `shell.css`, `shell-config.js` 추가 후 `-PackageOnly` | 성공. `site.entry=game/index.html`, `site.sha256`에 셸 4개 포함, `packaging.webShellSha256`에 `web/` 파일 5개 기록 |
+| `web/` 삭제 후 `-PackageOnly` | 성공. `site.entry=game/taisei.html`로 복귀 |
 
 ### 브라우저 로딩 확인 (스모크 테스트)
 
