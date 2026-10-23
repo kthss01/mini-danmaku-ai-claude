@@ -1,0 +1,313 @@
+/* Taisei 웹 셸 스타일. 상태 전환은 body[data-state]와 section[data-view]로만 제어한다. */
+:root {
+    color-scheme: dark;
+    --bg: #111111;
+    --panel: rgba(0, 0, 0, 0.78);
+    --text: #eeeeee;
+    --muted: #b8b8b8;
+    --accent: #6db0ed;
+    --accent-dark: #5c7da8;
+    --error: #ff8a80;
+    --border: rgba(255, 255, 255, 0.15);
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg) url('background.webp') no-repeat 50% 50% / cover;
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    line-height: 1.5;
+}
+
+/* 게임 화면이 활성화되면 페이지 스크롤을 완전히 막는다. */
+body[data-state="playing"] {
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+/* ----- 게임 화면 ----- */
+#game-root {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: none;
+}
+body[data-state="loading"] #game-root,
+body[data-state="playing"] #game-root,
+body[data-state="exited"] #game-root,
+body[data-state="error"].had-first-frame #game-root {
+    display: block;
+}
+/* canvas에는 테두리·패딩을 두지 않는다(마우스 좌표 어긋남 방지). 크기는 뷰포트 전체이며 게임이 내부에서 비율을 맞춘다. */
+#canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    width: 100dvw;
+    height: 100dvh;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    outline: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    background: #000;
+}
+#focus-hint {
+    position: absolute;
+    left: 50%;
+    bottom: 12%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    pointer-events: none;
+    font-size: 0.9rem;
+}
+
+/* ----- 오버레이 패널 ----- */
+#overlay {
+    position: fixed;
+    inset: 0;
+    overflow-y: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 24px 16px;
+    box-sizing: border-box;
+}
+body[data-state="playing"] #overlay {
+    display: none;
+}
+body[data-state="loading"] #overlay,
+body[data-state="error"] #overlay,
+body[data-state="exited"] #overlay {
+    background: rgba(0, 0, 0, 0.55);
+}
+#panel {
+    width: 100%;
+    max-width: 640px;
+    margin: auto;
+    padding: 24px 20px;
+    background: var(--panel);
+    border-radius: 10px;
+    box-sizing: border-box;
+}
+#panel header h1 {
+    margin: 0 0 4px;
+    font-size: 1.5rem;
+}
+#panel header p {
+    margin: 0 0 16px;
+}
+#panel h2 {
+    font-size: 1.1rem;
+    margin: 20px 0 8px;
+}
+#panel section {
+    display: none;
+}
+/* data-view에 현재 상태 이름이 포함된 section만 보인다(shell.js가 상태별로 hidden을 갱신). */
+#panel section.visible,
+#panel ul.visible {
+    display: block;
+}
+#panel ul.notes {
+    display: none;
+    padding-left: 20px;
+    margin: 16px 0 0;
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.error-text { color: var(--error); }
+
+button {
+    font: inherit;
+    cursor: pointer;
+}
+button.primary {
+    display: inline-block;
+    margin: 8px 0;
+    padding: 12px 32px;
+    background: var(--accent);
+    color: #000;
+    font-weight: bold;
+    font-size: 1.05rem;
+    border: 0;
+    border-radius: 6px;
+}
+button.primary:hover { background: #8cc4f4; }
+button.primary:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+button.primary:disabled { opacity: 0.5; cursor: default; }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
+}
+th, td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+}
+kbd {
+    font-family: ui-monospace, Consolas, monospace;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 1px 6px;
+    white-space: nowrap;
+}
+
+progress {
+    display: block;
+    width: 100%;
+    height: 14px;
+    margin: 8px 0;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 0;
+    border-radius: 7px;
+    background: #333;
+    overflow: hidden;
+}
+progress::-webkit-progress-bar { background: #333; border-radius: 7px; }
+progress::-webkit-progress-value { background: linear-gradient(90deg, var(--accent-dark), var(--accent)); }
+progress::-moz-progress-bar { background: linear-gradient(90deg, var(--accent-dark), var(--accent)); }
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    margin: 8px auto 12px;
+    border: 4px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2s; }
+}
+
+pre#error-detail {
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 30vh;
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 8px;
+    border-radius: 4px;
+    color: var(--muted);
+}
+pre#error-detail:empty { display: none; }
+
+/* ----- HUD ----- */
+#hud {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+}
+#hud:hover, #hud:focus-within { opacity: 1; }
+#hud button {
+    padding: 4px 10px;
+    background: rgba(0, 0, 0, 0.7);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+#hud-status {
+    padding: 4px 8px;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 4px;
+    color: var(--muted);
+}
+#hud-status:empty { display: none; }
+
+#controls-popover {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+}
+#controls-popover[hidden] { display: none; }
+.popover-body {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    max-height: 90vh;
+    overflow: auto;
+    margin: 16px;
+    padding: 20px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-sizing: border-box;
+}
+.popover-body h2 { margin-top: 0; }
+button.close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    color: var(--text);
+    border: 0;
+    font-size: 1.4rem;
+}
+
+#log-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.85);
+}
+#log-panel[hidden] { display: none; }
+#log {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.8rem;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    resize: vertical;
+}
+
+#footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 10px 16px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--muted);
+    background: rgba(0, 0, 0, 0.6);
+}
+#footer a { color: var(--accent); }
+body[data-state="playing"] #footer { display: none; }
+
+@media (max-width: 480px) {
+    #panel { padding: 16px 12px; }
+    #panel header h1 { font-size: 1.25rem; }
+    th, td { padding: 4px 6px; font-size: 0.9rem; }
+}
