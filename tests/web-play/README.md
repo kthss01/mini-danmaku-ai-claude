@@ -8,7 +8,7 @@
 | --- | --- |
 | `EVIDENCE_TEMPLATE.md` | 검증 1회분 기록 양식. 복사해서 `evidence/` 아래에 작성 |
 | `evidence/` | 실제 검증 기록. 파일 이름은 `YYYY-MM-DD-<브라우저>-<메인 커밋 7자리>.md` |
-| `collect-env.ps1` | OS·브라우저·커밋·도구 버전을 수집해 양식의 환경 표를 채우는 읽기 전용 스크립트 |
+| `collect-env.ps1` | OS·브라우저·커밋·도구 버전과 작업 트리 상태, 산출물 해시를 수집하는 읽기 전용 스크립트 |
 
 ## 규칙
 
@@ -17,8 +17,14 @@
 - 기록마다 검증한 메인 커밋과 `game/taisei` 커밋을 함께 적는다. 다른 PR 머지로 조합이 바뀌면 새 기록을 만든다.
 - 결함은 기록에 남기고 담당 세션 이슈(#4 빌드, #5 런타임, #6 셸, #7 서버)에 링크한다.
 
+- 커밋 SHA만 적지 않는다. 작업 트리의 미커밋 변경과 서빙한 산출물의 출처(빌드 시각·해시)를 함께 적고, 출처를 모르면 `출처 미확인`으로 둔다.
+- 기존 로컬 빌드로 한 탐색 QA는 `탐색(기존 산출물)`로 표시하고, 공식 판정은 새 checkout 빌드로만 한다.
+
 ## 환경 수집
 
 ```powershell
 .\tests\web-play\collect-env.ps1
+.\tests\web-play\collect-env.ps1 -SiteDirectory build\web\site
 ```
+
+두 번째 형태는 서빙 루트의 `taisei.html`/`taisei.js`/`taisei.wasm` 수정 시각과 SHA-256, manifest 유무를 함께 출력한다.
