@@ -140,12 +140,20 @@ python -m unittest discover -s tests/web-server -t tests/web-server -v
 
 ## 공식 산출물 검증 (세션 1·3 머지 후)
 
-세션 1 PR #11(머지 `03f580b`)과 세션 3 PR #12(머지 `1ad54ea`)가 main에 들어간 뒤, 새 디렉터리에서 문서 명령 그대로 빌드·서빙·검사했다. 이어서 세션 1 PR #15(머지 `fd9e00e`)가 Taisei gitlink를 `f59212b7`(세션 2 fork PR #1 포함)로 올렸으므로 같은 clone을 `fd9e00e`로 갱신해 다시 빌드·검사했다. 아래 표는 최신 `fd9e00e` 기준이다.
+세션 1 PR #11(머지 `03f580b`)과 세션 3 PR #12(머지 `1ad54ea`)가 main에 들어간 뒤, 새 디렉터리에서 문서 명령 그대로 빌드·서빙·검사했다(아래 1번). 이어서 세션 1 PR #15(머지 `fd9e00e`)가 Taisei gitlink를 `f59212b7`(세션 2 fork PR #1 포함)로 올렸으므로 같은 clone을 `fd9e00e`로 갱신해 `-Force`로 다시 빌드·검사했다(아래 2번). 아래 표는 최신 `fd9e00e` 기준이다.
 
 ```powershell
+# 1) 새 clone 첫 빌드 (03f580b 검증에 사용): 옵션 없이 실행, 270초(emsdk 캐시 사용)
 git clone --recurse-submodules https://github.com/kthss01/mini-danmaku-ai-claude.git
 cd mini-danmaku-ai-claude
-.\scripts\build-web.ps1                          # 종료 코드 0, fd9e00e 255초 / 03f580b 270초(emsdk 캐시 사용)
+.\scripts\build-web.ps1
+
+# 2) 같은 clone을 새 main으로 갱신한 두 번째 빌드 (fd9e00e 검증에 사용): 기존 build/web/install 이 있어 -Force 필요, 255초
+git pull --ff-only
+git submodule update --init --recursive
+.\scripts\build-web.ps1 -Force
+
+# 서빙과 검사 (두 경우 공통)
 python scripts/serve-web.py                       # 기본 루트 build/web/site, http://127.0.0.1:8080/
 python scripts/check-web-assets.py --entry index.html       --url http://127.0.0.1:8080 --require-wasm --verify-hashes --sample-data -1 --json build/web/check/index_html.json
 python scripts/check-web-assets.py --entry game/index.html  --url http://127.0.0.1:8080 --require-wasm --verify-hashes --sample-data -1 --json build/web/check/game_index_html.json
