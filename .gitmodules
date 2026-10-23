@@ -1,0 +1,3 @@
+[submodule "game/taisei"]
+	path = game/taisei
+	url = https://github.com/kthss01/taisei.git

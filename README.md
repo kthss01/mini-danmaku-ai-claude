@@ -14,7 +14,7 @@ Taisei Project 기반 탄막 게임의 자동 플레이와 시각 표현을 실�
 
 ## 현재 상태
 
-프로젝트 초기 골격과 구축 계획을 정리한 단계입니다. 아직 Taisei 버전, 원본 소스 관리 방식, 빌드 명령 및 게임 연동 API는 확정하지 않았습니다.
+Taisei fork를 `game/taisei` Git submodule로 연결하고 Windows x64 원본 빌드와 초기 실행을 확인했습니다. 현재 고정 커밋과 재현 절차는 [로컬 환경 구축 안내](docs/SETUP.md)에 기록되어 있습니다. 게임 상태 관측 및 자동 입력 연동은 아직 구현하지 않았습니다.
 
 ## 저장소 구조
 
@@ -24,6 +24,7 @@ Taisei Project 기반 탄막 게임의 자동 플레이와 시각 표현을 실�
 | `bridge/` | Taisei와 에이전트 사이의 상태·입력 연동 |
 | `configs/` | 실험 설정과 시각 표현 프리셋 |
 | `docs/` | 계획, 환경 구축, 구조 분석 및 실험 기록 |
+| `game/taisei/` | 사용자 fork를 가리키는 Taisei Git submodule |
 | `scripts/` | 설치, 빌드, 실행 및 평가 자동화 |
 | `tests/` | 충돌 예측과 연동 등 핵심 동작 검증 |
 | `artifacts/` | Git으로 관리 가능한 작은 결과 요약과 리플레이 안내 |
@@ -33,7 +34,21 @@ Taisei Project 기반 탄막 게임의 자동 플레이와 시각 표현을 실�
 ## 문서
 
 - [구축 계획](docs/PROJECT_PLAN.md)
+- [로컬 환경 구축 안내](docs/SETUP.md)
 - [문서 안내](docs/README.md)
+
+## 빠른 시작
+
+Windows PowerShell과 Docker Desktop을 사용합니다.
+
+```powershell
+git submodule update --init --recursive
+.\scripts\setup-taisei.ps1
+.\scripts\build-taisei.ps1
+.\scripts\run-taisei.ps1
+```
+
+빌드 산출물은 `build/taisei-windows-x64/`에 생성되며 Git에 포함되지 않습니다.
 
 ## 원칙
 
