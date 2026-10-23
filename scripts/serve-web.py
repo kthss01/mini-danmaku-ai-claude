@@ -31,6 +31,7 @@ import functools
 import http.server
 import os
 import posixpath
+import socket
 import sys
 import urllib.parse
 from pathlib import Path
@@ -187,8 +188,29 @@ class WebAssetsHandler(http.server.SimpleHTTPRequestHandler):
         super().log_message(format, *args)
 
 
+class WebAssetsServer(http.server.ThreadingHTTPServer):
+    """이미 사용 중인 포트에서는 반드시 bind 가 실패하도록 한 서버.
+
+    표준 HTTPServer 는 SO_REUSEADDR 를 켠다. Windows 에서는 먼저 LISTEN 중인 소켓도 SO_REUSEADDR 를
+    켰다면(python -m http.server 등) 두 번째 bind 가 성공해 같은 포트에 두 서버가 함께 LISTEN 하고,
+    요청은 먼저 뜬 서버로 간다(세션 5 QA-05, 2026-10-23 실측). Windows 에서는 SO_REUSEADDR 를 끄고
+    SO_EXCLUSIVEADDRUSE 로 bind 해서, 상대가 어떤 옵션을 썼든 WSAEADDRINUSE/WSAEACCES 로 실패하게 한다.
+    Linux 는 SO_REUSEADDR 가 LISTEN 중인 포트의 중복 bind 를 허용하지 않으므로 표준 동작을 유지한다.
+    """
+
+    daemon_threads = True
+    exclusive_bind = os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE")
+    if exclusive_bind:
+        allow_reuse_address = False
+
+    def server_bind(self):
+        if self.exclusive_bind:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def create_server(root: Path, host: str = "127.0.0.1", port: int = 8080, index_name: str = DEFAULT_INDEX,
-                  cross_origin_isolation: bool = False, quiet: bool = False) -> http.server.ThreadingHTTPServer:
+                  cross_origin_isolation: bool = False, quiet: bool = False) -> WebAssetsServer:
     """바인딩까지 끝난 서버 객체를 돌려준다. 루트 검증은 호출자가 한다."""
     handler = functools.partial(
         WebAssetsHandler,
@@ -197,9 +219,7 @@ def create_server(root: Path, host: str = "127.0.0.1", port: int = 8080, index_n
         cross_origin_isolation=cross_origin_isolation,
         quiet=quiet,
     )
-    server = http.server.ThreadingHTTPServer((host, port), handler)
-    server.daemon_threads = True
-    return server
+    return WebAssetsServer((host, port), handler)
 
 
 def validate_root(root: Path, index_name: str) -> str | None:
