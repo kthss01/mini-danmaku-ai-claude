@@ -12,7 +12,7 @@
 | --- | --- |
 | 소스의 웹 지원 범위 | 고정 커밋에 Emscripten 전용 VFS(`src/vfs/*emscripten*`), 메인 루프(`src/eventloop/executor_emscripten.c`), 셸 연동 JS(`emscripten/preamble.js`, `postamble.js`, `shell.html`)가 이미 포함 |
 | 수정 없이 동작 확인 | 시작 → 인트로 컷신 → 메인 메뉴 → 난이도·캐릭터 선택 → 스테이지 1 플레이(이동·공격·피격·컨티뉴·포기) → 리플레이 저장 → 새로고침 후 설정·진행도·리플레이 재조회 및 재생 |
-| 소스 차원의 플레이 차단 원인 | 정상 배포에서는 없음. 단, `data/` 파일 누락·불일치 시 **무한 재시도로 로딩이 멈추는** 문제를 재현했고 fork에서 수정(4절) |
+| 소스 차원의 플레이 차단 원인 | 이번에 관찰한 범위(내장 Chromium, 로컬 HTTP, 스테이지 1까지)에서는 없음. 단, `data/` 파일 누락·불일치 시 **무한 재시도로 로딩이 멈추는** 문제를 재현했고 fork에서 수정(4절) |
 | 스레드·헤더 | pthreads 미사용 → COOP/COEP 불필요 |
 | 저장소 | IndexedDB(IDBFS) `/persistent`. 설정·진행도·리플레이·리소스 캐시 모두 여기에 저장 |
 | 오디오 | SDL3 emscripten 드라이버가 첫 사용자 입력 후 자동 재개. 셸 JS 불필요 |
@@ -106,10 +106,10 @@ taisei.callMain();
 
 - 게임 로그는 `Module.print`로 전달되어 콘솔과 업스트림 셸의 `#output` textarea("Show log")에 모두 쌓인다. 첫 실행은 fetch 로그가 1000줄을 넘어 DevTools 콘솔 버퍼가 밀릴 수 있으므로 textarea 쪽이 안정적이다. 웹 콘솔 기본 레벨은 `LOG_ALERT | LOG_INFO`(`src/log.h`).
 - 치명 오류(`log_fatal`)는 `abort()` → `RuntimeError: Aborted()`로 `window.onerror`에 도달하고 업스트림 셸이 `Error: ...`로 표시한다. `ASSERTIONS=0`이라 메시지에 원인은 없고, 원인은 그 직전 `E:` 로그를 봐야 한다.
-- 정상 실행에서도 나오는 오류·경고(무시 가능):
-  - `rwzstd_reader_init_seektable ... SDL_ReadIO() returned 0, expected 9`: seekable 테이블이 없는 zstd 캐시 파일의 폴백 경로(`src/rwops/rwops_zstd.c`)
-  - `Node 'res/shader/global.pp' does not exist`: Windows 빌드와 동일
-  - `Node 'res/config.default' does not exist`, 첫 실행의 `storage/progress.zst ... No such file`
+- 정상 실행에서도 나오는 오류·경고. 아래 분류는 소스 근거와 이번 관찰 범위에 한정한 판단이며, 다른 증상이 함께 나타나면 다시 봐야 한다.
+  - `rwzstd_reader_init_seektable ... SDL_ReadIO() returned 0, expected 9`: `rwzstd_open_reader()`가 seekable 포맷의 seek table을 "있으면" 읽는 시도이며, 없으면 프레임 헤더로 폴백한다(`src/rwops/rwops_zstd.c`). `/persistent/cache/textures/` 캐시 파일에서 발생. 텍스처는 정상 표시됨.
+  - `Node 'res/shader/global.pp' does not exist`, `viewport.pp` 관련 오류: 둘 다 `RESF_OPTIONAL`로 로드하는 사용자 정의 후처리 체인이다(`src/video_postprocess.c`의 `"global"`, `src/stagedraw.c`의 `"viewport"`). 기본 리소스에는 `.pp` 파일이 없고(`resources/` 트리에 `*.pp` 없음), `postprocess()`는 체인이 비어 있으면 그대로 반환하므로 화면 영향이 없다. `kvparser`가 VFS 오류를 `E:`로 찍을 뿐이다.
+  - `Node 'res/config.default' does not exist`: 선택 파일(`config_load_file`, `LOG_INFO`), 첫 실행의 `storage/progress.zst ... No such file`: 첫 실행 전용
   - `Couldn't load mappings: res/gamecontrollerdb.txt`(2.4절)
 
 ## 3. 세션별 요구사항 정리
@@ -117,7 +117,7 @@ taisei.callMain();
 | 세션 | 요구사항 |
 | --- | --- |
 | 1 (빌드) | 산출물 계약(`site/game/` 아래 `taisei.html`·`taisei.js`·`taisei.wasm`·`data/`)에 동의. 추가 소스 수정 요구 없음. fork 수정 커밋(4절)을 gitlink에 반영 |
-| 3 (셸) | 업스트림 셸을 유지하거나, 교체 시 `Module`의 `canvas`·`preinitializedWebGLContext`·`onFirstFrame`·`setStatus`·`print`·`printErr` 계약과 `createTaisei → initFilesystem → callMain` 순서를 지킬 것. 캔버스 `id="canvas"`. 입력 preventDefault·오디오 resume·저장 JS는 중복 작성 불필요. 셸이 `game/` 밖(루트)에서 `createTaisei`를 직접 호출하려면 `<base href="game/">` 또는 데이터 URL 접두사 소스 수정이 필요하므로 미리 조정 |
+| 3 (셸) | 업스트림 셸을 유지하거나, 교체 시 `Module`의 `canvas`·`preinitializedWebGLContext`·`onFirstFrame`·`setStatus`·`print`·`printErr` 계약과 `createTaisei → initFilesystem → callMain` 순서를 지킬 것. 캔버스 `id="canvas"`. 입력 preventDefault·오디오 resume·저장 JS는 중복 작성 불필요. 게임 페이지는 `game/` 아래(`game/index.html` 또는 `game/taisei.html`)에서 실행하는 것으로 확정하며, 루트에서 `createTaisei`를 직접 호출하기 위한 데이터 URL 접두사 소스 수정은 범위에서 제외. 다운로드 실패 시 `Module.setStatus("Error: Failed to download …")` 뒤에 필수 리소스면 `abort()`가 이어지므로, 셸의 `onerror`/`onAbort`는 `Module.lastDownloadError`(4.2절)가 있으면 그 원인을 함께 표시할 것 |
 | 4 (서버) | `.wasm` → `application/wasm`, 확장자 없는 `data/*`는 아무 MIME이나 가능(로더가 `application/octet-stream`으로 덮어씀), COOP/COEP 불필요, `Cache-Control: no-store` 가능(게임이 IndexedDB에 자체 캐시) |
 | 5 (QA) | Chrome/Edge에서 탭 전환(blur) 시 키 해제·일시정지, 스피커 출력, 아래 4·5절의 검증 절차 수행 |
 
@@ -143,19 +143,37 @@ for(;;) {
 
 ### 4.2 수정
 
-fork PR [kthss01/taisei#1](https://github.com/kthss01/taisei/pull/1), 브랜치 `feat/web-fetch-fail-fast`, 커밋 `947edc6bdf094624373c55cd5570f8b42c7ad3fd`. 머지 후 세션 1이 메인 `game/taisei` gitlink를 머지 커밋으로 갱신한다.
+fork PR [kthss01/taisei#1](https://github.com/kthss01/taisei/pull/1), 브랜치 `feat/web-fetch-fail-fast`, 커밋 `947edc6b`(재시도 제한) + `69a2ab97`(오류 원인 보존), head `69a2ab9733c69858617ace90c9b6e058e71726f9`. 머지 후 세션 1이 메인 `game/taisei` gitlink를 머지 커밋으로 갱신한다.
 
-- 네트워크 단절(status 0)·408·429·5xx 같은 일시적 오류만 최대 3회(0.5 s, 1 s 간격) 재시도
-- 404 등 그 외 응답은 즉시 `vfs_set_error()`로 실패를 반환하고, `Module.setStatus("Error: Failed to download <url> (HTTP status N)")`로 셸에 표시
-- 실패한 리소스가 필수 리소스면 Taisei의 기존 경로(`Required ... couldn't be loaded` → `log_fatal`)로 중단되고, 선택 리소스면 로그만 남기고 계속 진행
+- 네트워크 단절(status 0)·408·429·5xx 같은 일시적 오류만 **횟수 기준** 최대 3회 시도(실패 후 0.5 s, 1 s 대기) 후 포기. 이것은 총 소요 시간 제한이 아니다. `emscripten_fetch_attr_t.timeoutMSecs`를 설정하지 않으므로(0 → Emscripten `Fetch.js`에서 timeout 미적용) 응답이 끝나지 않고 멈춘 연결은 `fetch_wait()`가 계속 기다린다. 서버가 응답을 끊거나 오류 코드를 돌려주는 경우만 이 수정의 대상이다.
+- 404 등 그 외 응답은 첫 실패에서 바로 `vfs_set_error()`로 실패를 반환한다.
+- 포기 시점에 `Module.setStatus("Error: Failed to download <url> (HTTP status N)", true)`로 셸에 표시하고, 같은 문자열을 `Module.lastDownloadError`에 남긴다. 이 표시는 필수·선택 리소스 구분 없이 일어난다.
+- 그다음은 Taisei의 기존 리소스 로더가 처리한다. 필수 리소스(`RESF_DEFAULT`)면 `Required ... couldn't be loaded` → `log_fatal` → `abort()`로 중단되고, 선택 리소스(`RESF_OPTIONAL`)면 `Failed to load ...` 오류 로그만 남기고 게임은 계속 진행한다(상태 표시줄의 오류 문구는 남는다).
+- 백그라운드 prefetch(`prefetch_next`)의 실패는 `fetch_onerror` 로그만 남기고 재시도하지 않는다. 재시도는 실제로 그 파일을 여는 `vfs_fetch_open()`에서만 일어난다.
 
 ### 4.3 검증
 
-- 빌드: 공식 CI와 같은 Docker 이미지 `taiseiproject/linux-toolkit:20260804`, emsdk 5.0.3, cross-file `common-options` / `forcefallback` / `emscripten-build`, `-Dbuild.cpp_std=gnu++14`. 수정 커밋으로 `meson compile`/`install` 성공(약 5분). `taisei.wasm` SHA-256 `0fe02b5d82865b9b0f9e93e92b1edbeff2979dbf9fe3965cc6b342e4103182b6`, `data/` 529개.
-- 정상 데이터: `Initialization complete` 후 인트로 컷신 렌더링. 동작 변화 없음.
-- 폰트 파일 1개 제거 + IndexedDB 비움: 해당 URL 요청 **1회**(404는 재시도하지 않음), 셸 상태에 `Error: Failed to download data/6e3e30da… (HTTP status 404)` 표시, 로그 `vfs_fetch_open: Giving up on … after 1 attempt(s); last HTTP status 404` → `Required font 'standard_cjk' couldn't be loaded` → `Aborted()`로 종료. 수정 전 같은 조건에서는 10초 동안 404 요청 620회 이상, 화면 표시 없음.
-- 미검증: 일시적 오류(status 0 / 5xx) 재시도 경로는 서버 장애를 재현하지 않아 코드 검토로만 확인.
-- 참고: 로컬 clone으로 빌드하면 버전 문자열이 태그 유무에 따라 달라진다(`v1.5-dev` 대 `v1.4-830-g947edc6b`). 동작과 무관하며 세션 1의 빌드 스크립트가 태그를 포함해 clone하는지 확인하면 된다.
+빌드: 공식 CI와 같은 Docker 이미지 `taiseiproject/linux-toolkit:20260804`, emsdk 5.0.3, cross-file `common-options` / `forcefallback` / `emscripten-build`, `-Dbuild.cpp_std=gnu++14`. 두 커밋 모두 `meson compile`/`install` 성공(각 약 5분).
+
+| head | `taisei.wasm` SHA-256 | 비고 |
+| --- | --- | --- |
+| `947edc6b` | `0fe02b5d82865b9b0f9e93e92b1edbeff2979dbf9fe3965cc6b342e4103182b6` | 재시도 제한 |
+| `69a2ab97` | `c8fec8c8f5d5ce6d690f85be7557b3f9f663638dbda19412c5ae416f08a9b330` | + `lastDownloadError` |
+
+실행: Claude Code 내장 Chromium. 시나리오마다 다른 포트(= 다른 오리진)를 써서 IndexedDB가 비어 있는 상태에서 시작했고, 대상 리소스는 시작 직후 필수 폰트로 열리는 `data/6e3e30da…`(SourceHanSans-Regular-0.ttf, 리소스 인덱스 #32)이다. 결함 주입 서버는 지정 경로에 대해 처음 N회 503을 돌려주고 모든 요청을 타임스탬프와 함께 기록한다.
+
+| 시나리오 | head | 대상 URL 요청(서버 로그) | 게임 로그 | 결과 |
+| --- | --- | --- | --- | --- |
+| 정상 데이터 | 둘 다 | 각 파일 1회 | `Initialization complete` | 인트로 컷신 렌더링. 동작 변화 없음 |
+| 404(파일 제거) | `947edc6b` | **1회** | `Giving up … after 1 attempt(s); last HTTP status 404` → `Required font 'standard_cjk' couldn't be loaded` → `Aborted()` | 셸 상태 `Error: Failed to download data/6e3e30da… (HTTP status 404)`. 수정 전 같은 조건: 10초 동안 620회 이상, 표시 없음 |
+| 503 → 503 → 200 | `69a2ab97` | 3회: +0.000 s 503(prefetch), +0.125 s 503(open 1차), +0.532 s 200(open 2차) | `Retrying … (attempt 2 of 3)` → `fetch_onsuccess: Cached …` → `Initialization complete` | 게임 정상 시작, 상태 표시 없음 |
+| 항상 503 | `69a2ab97` | **4회**: +0.000 s(prefetch), +0.125 s(open 1차), +0.531 s(open 2차), +1.578 s(open 3차) | `Retrying (attempt 2 of 3)` → `Retrying (attempt 3 of 3)` → `Giving up … after 3 attempt(s); last HTTP status 503` → 필수 폰트 fatal → `Aborted()` | 셸 상태 `Error: … (HTTP status 503)`, `Module.lastDownloadError`에 같은 문자열 보존 |
+
+- 재시도 간격은 코드의 0.5 s·1 s 대기와 `fetch_wait()`의 10 ms 폴링이 합쳐진 값이다(서버 로그 기준 약 0.41 s, 1.05 s).
+- 백그라운드 prefetch 요청(1회, 재시도 없음)과 `vfs_fetch_open()` 재시도(최대 3회)는 게임 로그에서 `Retrying` 줄 유무로 구분된다. 같은 페이지 로드에서 총 요청은 prefetch 1 + open 최대 3 = 4회를 넘지 않았다.
+- 503 소진 시나리오를 두 번 실행했고 두 번째 실행(8097)에서 위 수치를 얻었다. 첫 번째 실행(8095)의 서버 로그에는 같은 4회 묶음이 두 번 기록됐는데, 서버가 뜨기 전 실패한 탐색을 브라우저가 재시도해 페이지가 두 번 로드된 것으로 설명된다(묶음 사이 약 6 s, 각 묶음 내부 간격은 동일).
+- 미검증: status 0(네트워크 단절)·408·429 분기는 503과 같은 코드 경로(`fetch_status_is_transient`)라 별도 실행하지 않았다. 응답이 멈춘 연결(stall)은 timeout이 없어 계속 기다리며(4.2절), 재현하지 않았다.
+- 참고: 로컬 clone으로 빌드하면 버전 문자열이 태그 유무에 따라 달라진다(`v1.5-dev` 대 `v1.4-831-g69a2ab97`). 동작과 무관하며 세션 1의 빌드 스크립트가 태그를 포함해 clone하는지 확인하면 된다.
 
 ## 5. 저장(persistence) 검증 절차
 
@@ -180,4 +198,5 @@ keys.filter(k => k.startsWith('/persistent/storage'));
 - 실제 Chrome/Edge에서의 blur 시 키 해제·일시정지, 스피커 출력, 5분 이상 플레이 안정성, FPS 측정 → 세션 5
 - 게임패드 매핑 파일 미포함(2.4절). 키보드 플레이 범위에서는 문제 없음
 - 리플레이·스크린샷을 파일로 내보내기 → 범위 밖, 필요 시 후속 이슈
-- 루트 셸에서 `createTaisei`를 직접 호출하는 구성이 필요해지면 데이터 URL 접두사 소스 수정 필요(세션 3 결정 대기)
+- 응답이 끝나지 않는 연결(stall)에 대한 fetch timeout은 설정하지 않음(4.2절). 필요해지면 `timeoutMSecs` 도입을 별도 fork PR로 검토
+- 루트 페이지에서 `createTaisei`를 직접 호출하기 위한 데이터 URL 접두사 수정은 `game/` 배치 확정에 따라 범위에서 제외
