@@ -117,7 +117,7 @@ taisei.callMain();
 | 세션 | 요구사항 |
 | --- | --- |
 | 1 (빌드) | 산출물 계약(`site/game/` 아래 `taisei.html`·`taisei.js`·`taisei.wasm`·`data/`)에 동의. 추가 소스 수정 요구 없음. fork 수정 커밋(4절)을 gitlink에 반영 |
-| 3 (셸) | 업스트림 셸을 유지하거나, 교체 시 `Module`의 `canvas`·`preinitializedWebGLContext`·`onFirstFrame`·`setStatus`·`print`·`printErr` 계약과 `createTaisei → initFilesystem → callMain` 순서를 지킬 것. 캔버스 `id="canvas"`. 입력 preventDefault·오디오 resume·저장 JS는 중복 작성 불필요. 게임 페이지는 `game/` 아래(`game/index.html` 또는 `game/taisei.html`)에서 실행하는 것으로 확정하며, 루트에서 `createTaisei`를 직접 호출하기 위한 데이터 URL 접두사 소스 수정은 범위에서 제외. 다운로드 실패 시 `Module.setStatus("Error: Failed to download …")` 뒤에 필수 리소스면 `abort()`가 이어지므로, 셸의 `onerror`/`onAbort`는 `Module.lastDownloadError`(4.2절)가 있으면 그 원인을 함께 표시할 것 |
+| 3 (셸) | 업스트림 셸을 유지하거나, 교체 시 `Module`의 `canvas`·`preinitializedWebGLContext`·`onFirstFrame`·`setStatus`·`print`·`printErr` 계약과 `createTaisei → initFilesystem → callMain` 순서를 지킬 것. 캔버스 `id="canvas"`. 입력 preventDefault·오디오 resume·저장 JS는 중복 작성 불필요. 게임 페이지는 `game/` 아래(`game/index.html` 또는 `game/taisei.html`)에서 실행하는 것으로 확정하며, 루트에서 `createTaisei`를 직접 호출하기 위한 데이터 URL 접두사 소스 수정은 범위에서 제외. 다운로드 실패 시 `Module.setStatus("Error: Failed to download …", true)` 뒤에 필수 리소스면 `abort()`가 이어진다. 세션 3 셸(PR #12, `docs/web/SHELL.md`)은 `Error:`로 시작하는 문구를 상태가 아닌 내려받기 오류로 보존해 경고 줄·HUD·오류 패널에 표시하므로 이 요구를 충족한다. `Module.lastDownloadError`(4.2절)는 같은 문자열을 담는 보조 경로이며, 셸이 쓰지 않아도 된다 |
 | 4 (서버) | `.wasm` → `application/wasm`, 확장자 없는 `data/*`는 아무 MIME이나 가능(로더가 `application/octet-stream`으로 덮어씀), COOP/COEP 불필요, `Cache-Control: no-store` 가능(게임이 IndexedDB에 자체 캐시) |
 | 5 (QA) | Chrome/Edge에서 탭 전환(blur) 시 키 해제·일시정지, 스피커 출력, 아래 4·5절의 검증 절차 수행 |
 
@@ -143,7 +143,7 @@ for(;;) {
 
 ### 4.2 수정
 
-fork PR [kthss01/taisei#1](https://github.com/kthss01/taisei/pull/1), 브랜치 `feat/web-fetch-fail-fast`, 커밋 `947edc6b`(재시도 제한) + `69a2ab97`(오류 원인 보존), head `69a2ab9733c69858617ace90c9b6e058e71726f9`. 머지 후 세션 1이 메인 `game/taisei` gitlink를 머지 커밋으로 갱신한다.
+fork PR [kthss01/taisei#1](https://github.com/kthss01/taisei/pull/1)(브랜치 `feat/web-fetch-fail-fast`)은 커밋 `947edc6b`(재시도 제한)와 `69a2ab97`(오류 원인 보존)로 이루어진다. 검증 head `69a2ab9733c69858617ace90c9b6e058e71726f9`가 Codex 재검토를 통과했고 2026-10-23 `master`에 머지됐다. **머지 커밋은 `f59212b72df3b68459b4677a6200e42be700078a`**이며, 이슈 #4 댓글로 세션 1에 전달했다. 메인 `game/taisei` gitlink는 세션 1이 이 커밋으로 갱신한다.
 
 - 네트워크 단절(status 0)·408·429·5xx 같은 일시적 오류만 **횟수 기준** 최대 3회 시도(실패 후 0.5 s, 1 s 대기) 후 포기. 이것은 총 소요 시간 제한이 아니다. `emscripten_fetch_attr_t.timeoutMSecs`를 설정하지 않으므로(0 → Emscripten `Fetch.js`에서 timeout 미적용) 응답이 끝나지 않고 멈춘 연결은 `fetch_wait()`가 계속 기다린다. 서버가 응답을 끊거나 오류 코드를 돌려주는 경우만 이 수정의 대상이다.
 - 404 등 그 외 응답은 첫 실패에서 바로 `vfs_set_error()`로 실패를 반환한다.
@@ -166,12 +166,15 @@ fork PR [kthss01/taisei#1](https://github.com/kthss01/taisei/pull/1), 브랜치 
 | --- | --- | --- | --- | --- |
 | 정상 데이터 | 둘 다 | 각 파일 1회 | `Initialization complete` | 인트로 컷신 렌더링. 동작 변화 없음 |
 | 404(파일 제거) | `947edc6b` | **1회** | `Giving up … after 1 attempt(s); last HTTP status 404` → `Required font 'standard_cjk' couldn't be loaded` → `Aborted()` | 셸 상태 `Error: Failed to download data/6e3e30da… (HTTP status 404)`. 수정 전 같은 조건: 10초 동안 620회 이상, 표시 없음 |
-| 503 → 503 → 200 | `69a2ab97` | 3회: +0.000 s 503(prefetch), +0.125 s 503(open 1차), +0.532 s 200(open 2차) | `Retrying … (attempt 2 of 3)` → `fetch_onsuccess: Cached …` → `Initialization complete` | 게임 정상 시작, 상태 표시 없음 |
-| 항상 503 | `69a2ab97` | **4회**: +0.000 s(prefetch), +0.125 s(open 1차), +0.531 s(open 2차), +1.578 s(open 3차) | `Retrying (attempt 2 of 3)` → `Retrying (attempt 3 of 3)` → `Giving up … after 3 attempt(s); last HTTP status 503` → 필수 폰트 fatal → `Aborted()` | 셸 상태 `Error: … (HTTP status 503)`, `Module.lastDownloadError`에 같은 문자열 보존 |
+| 503 → 503 → 200 | `69a2ab97` | 3회(서버 수신 시각): #1 +0.000 s 503, #2 +0.125 s 503, #3 +0.532 s 200 | `Downloading` → `fetch_onerror` → `Retrying … (attempt 2 of 3)` → `Downloading` → `fetch_onerror` → `Downloading` → `fetch_onsuccess: Cached …` → `Initialization complete` | 게임 정상 시작, 상태 표시 없음 |
+| 항상 503 | `69a2ab97` | **4회**: #1 +0.000 s, #2 +0.125 s, #3 +0.531 s, #4 +1.578 s | `Retrying (attempt 2 of 3)` 1줄, `Retrying (attempt 3 of 3)` 1줄, `Giving up … after 3 attempt(s); last HTTP status 503` → 필수 폰트 fatal → `Aborted()` | 셸 상태 `Error: … (HTTP status 503)`, `Module.lastDownloadError`에 같은 문자열 보존 |
 
-- 재시도 간격은 코드의 0.5 s·1 s 대기와 `fetch_wait()`의 10 ms 폴링이 합쳐진 값이다(서버 로그 기준 약 0.41 s, 1.05 s).
-- 백그라운드 prefetch 요청(1회, 재시도 없음)과 `vfs_fetch_open()` 재시도(최대 3회)는 게임 로그에서 `Retrying` 줄 유무로 구분된다. 같은 페이지 로드에서 총 요청은 prefetch 1 + open 최대 3 = 4회를 넘지 않았다.
-- 503 소진 시나리오를 두 번 실행했고 두 번째 실행(8097)에서 위 수치를 얻었다. 첫 번째 실행(8095)의 서버 로그에는 같은 4회 묶음이 두 번 기록됐는데, 서버가 뜨기 전 실패한 탐색을 브라우저가 재시도해 페이지가 두 번 로드된 것으로 설명된다(묶음 사이 약 6 s, 각 묶음 내부 간격은 동일).
+관측값과 해석을 구분한다.
+
+- **관측:** 페이지 로드 1회당 대상 URL 요청은 최대 4회였다. 게임 로그의 `Retrying` 줄은 소진 시나리오에서 2줄, 복구 시나리오에서 1줄이었고, `Giving up`은 "3 attempt(s)"로 기록됐다. 무한 재시도는 일어나지 않았다.
+- **코드상 의도:** `vfs_fetch_open()`은 최대 3번 시도하고, 실패 뒤 0.5 s, 1.0 s를 `emscripten_sleep()`으로 기다린다. `fetch_begin_request()`는 같은 URL 요청이 진행 중이면 그 요청을 재사용하므로, `vfs_fetch_open()`의 첫 시도가 진행 중인 prefetch 요청을 공유할 수 있다.
+- **해석(미확정):** #1이 prefetch이면서 open 1차를 겸하고, #3과 #4가 대기 뒤의 재시도라고 보면 시각이 의도와 맞는다(#1 실패 뒤 약 0.5 s에 #3, #3 실패 뒤 약 1.05 s에 #4). 이 경우 #2(+0.125 s)는 앞에 `Retrying` 로그가 없는 별도 요청이다. 같은 폰트 파일을 쓰는 다른 폰트 리소스가 연 요청일 가능성이 있다(정상 실행 로그에 이 파일의 `Loaded font`가 두 번 나온다). 그러나 이 요청의 출처는 확인하지 않았다. 처음 보고에서는 #1을 prefetch, #2를 open 1차로 보고 간격을 약 0.41 s로 계산했는데, 코드의 0.5 s 대기로는 설명되지 않아 위와 같이 정정한다. 서버 로그 시각 측정 오차 등 다른 원인도 배제하지 않았다.
+- 503 소진 시나리오를 두 번 실행했고 두 번째 실행(8097)에서 위 수치를 얻었다. 첫 번째 실행(8095)의 서버 로그에는 같은 4회 묶음이 약 6 s 간격으로 두 번 기록됐다. 서버가 뜨기 전 실패한 탐색을 브라우저가 다시 시도해 페이지가 두 번 로드된 것으로 **추정**하며, 확인하지는 않았다.
 - 미검증: status 0(네트워크 단절)·408·429 분기는 503과 같은 코드 경로(`fetch_status_is_transient`)라 별도 실행하지 않았다. 응답이 멈춘 연결(stall)은 timeout이 없어 계속 기다리며(4.2절), 재현하지 않았다.
 - 참고: 로컬 clone으로 빌드하면 버전 문자열이 태그 유무에 따라 달라진다(`v1.5-dev` 대 `v1.4-831-g69a2ab97`). 동작과 무관하며 세션 1의 빌드 스크립트가 태그를 포함해 clone하는지 확인하면 된다.
 
