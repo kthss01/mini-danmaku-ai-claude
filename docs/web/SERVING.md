@@ -15,7 +15,7 @@ Taisei 웹 빌드(HTML/JS/WASM/리소스)를 로컬에서 제공하는 명령과
 | 스레드(pthreads) | 현재 빌드는 사용하지 않음 → COOP/COEP 격리 헤더 불필요(옵션으로 제공) |
 | 리소스 경로 | `data/<sha256>` 상대 경로, 529개 207.1 MiB, 내용 해시 전부 일치 |
 | fixture 테스트 | 49개: Windows 48 통과 + symlink 권한 없어 1 skip, Linux(Docker python:3.12) 49 통과 (`tests/web-server`) |
-| 공식 산출물 검사 | main `03f580b` 새 clone의 `build/web/site`: 진입 3종(`index.html`, `game/index.html`, `game/taisei.html`) 모두 통과, 브라우저에서 루트 진입→시작→인트로 장면까지 리소스 실패 0 |
+| 공식 산출물 검사 | main `fd9e00e`(Taisei `f59212b7`)의 `build/web/site`: 진입 3종(`index.html`, `game/index.html`, `game/taisei.html`) 모두 통과. 직전 main `03f580b` 산출물도 같은 결과, 브라우저에서 루트 진입→시작→인트로 장면까지 리소스 실패 0 |
 | 탐색 검증(이전) | 기존 로컬 빌드 평면·중첩 배치 통과(HTTP 541건) |
 
 ## 전제: 산출물 구조
@@ -140,12 +140,12 @@ python -m unittest discover -s tests/web-server -t tests/web-server -v
 
 ## 공식 산출물 검증 (세션 1·3 머지 후)
 
-세션 1 PR #11(머지 `03f580b`)과 세션 3 PR #12(머지 `1ad54ea`)가 main에 들어간 뒤, 새 디렉터리에서 문서 명령 그대로 빌드·서빙·검사했다.
+세션 1 PR #11(머지 `03f580b`)과 세션 3 PR #12(머지 `1ad54ea`)가 main에 들어간 뒤, 새 디렉터리에서 문서 명령 그대로 빌드·서빙·검사했다. 이어서 세션 1 PR #15(머지 `fd9e00e`)가 Taisei gitlink를 `f59212b7`(세션 2 fork PR #1 포함)로 올렸으므로 같은 clone을 `fd9e00e`로 갱신해 다시 빌드·검사했다. 아래 표는 최신 `fd9e00e` 기준이다.
 
 ```powershell
 git clone --recurse-submodules https://github.com/kthss01/mini-danmaku-ai-claude.git
 cd mini-danmaku-ai-claude
-.\scripts\build-web.ps1                          # 종료 코드 0, 270초(emsdk 캐시 사용)
+.\scripts\build-web.ps1                          # 종료 코드 0, fd9e00e 255초 / 03f580b 270초(emsdk 캐시 사용)
 python scripts/serve-web.py                       # 기본 루트 build/web/site, http://127.0.0.1:8080/
 python scripts/check-web-assets.py --entry index.html       --url http://127.0.0.1:8080 --require-wasm --verify-hashes --sample-data -1 --json build/web/check/index_html.json
 python scripts/check-web-assets.py --entry game/index.html  --url http://127.0.0.1:8080 --require-wasm --verify-hashes --sample-data -1 --json build/web/check/game_index_html.json
@@ -156,20 +156,22 @@ python scripts/check-web-assets.py --entry game/taisei.html --url http://127.0.0
 
 | 항목 | 값 |
 | --- | --- |
-| 메인 커밋 | `03f580bd9f54d23a08fba39dbe84b7d5be486612`, 미커밋 변경 없음(`repositoryDirtyEntries: []`, `webShellDirtyEntries: []`) |
-| Taisei fork | `5668c41b41f7227d21fc80cf56997d4d30356ce7`, 미커밋 변경 없음 |
+| 메인 커밋 | `fd9e00ea087f2b4f3606755ddace7f5bc2f8c00c`, 미커밋 변경 없음(`repositoryDirtyEntries: []`, `webShellDirtyEntries: []`) |
+| Taisei fork | `f59212b72df3b68459b4677a6200e42be700078a`, 미커밋 변경 없음 |
 | 도구 | emsdk 5.0.3, `taiseiproject/linux-toolkit:20260804@sha256:1104b4a5…74b2` |
-| 빌드 시각 | 2026-10-23T12:30:24Z 시작, 패키징 12:34:38Z (`BuildAndPackage`) |
-| site | 진입 `game/index.html`, 549개 파일(build-info 제외), 222,407,535 B |
-| `build-info.json` SHA-256 | `f9535df8adf82d5287668e9412ca4b493ce6b9be58e122eee0873d92f0688484` |
-| `game/taisei.wasm` | 4,538,726 B, `3c43a6b1a780bdaae65e89d63b69bff2ab1b7c4cfe329f81b6882fb10b084192` |
-| `game/taisei.js` | `3e7ed5b785d039c22c67bb87a70b36ee01d3b96202ff715643d7e97eb33c8d64` |
+| 빌드 시각 | 2026-10-23T13:06:27Z 시작, 패키징 13:10:30Z (`BuildAndPackage`) |
+| site | 진입 `game/index.html`, 549개 파일(build-info 제외), 222,408,181 B |
+| `build-info.json` SHA-256 | `ec8eef2cbd763d912509b7bb68b0c305da786d21c1fb28c217172847a3906a92` |
+| `game/taisei.wasm` | 4,539,198 B, `1eb2168135b22c2d2a2d37e09e04f3ef96d073b6013120a8b4749feaaea0c1ad` |
+| `game/taisei.js` | 101,107 B, `d49ca968c16d0a69cc275f21a2f537db51c151a25401781c911149c328c73a01` |
 | `game/index.html` | `0a8b31f86be3f7b53cce0d3ae88d7d49ea5ac02e5c652597ab4d439596c08f2d` |
 | `game/data/` | 529개, 217,186,447 B. 목록 매니페스트(이름순 `<이름> <크기>` 줄을 LF로 이어 붙인 텍스트의 SHA-256) `aa172eaf613c3e7e39bfd142b5a58b64cf7f8d55be512eaa9a0f11217ddfa3db` |
 
-`taisei.wasm` 해시는 탐색 검증에 쓴 이전 로컬 빌드(`eb97b68b…`)와 다르다. 세션 1이 기록한 대로 wasm 바이트 재현성은 보장되지 않으며, `taisei.js`와 `data/` 이름 목록은 같다.
+직전 main `03f580b`(Taisei `5668c41b`) 산출물: site 549개 222,407,535 B, `taisei.wasm` 4,538,726 B `3c43a6b1…4192`, `taisei.js` `3e7ed5b7…8d64`, `build-info.json` `f9535df8…8484`. `data/` 매니페스트는 위와 같다.
 
-검사 결과:
+`fd9e00e`의 `taisei.js`는 세션 1이 #4에 인계한 값(`d49ca968…`)과 같고, `taisei.wasm`은 세션 1 빌드(`76f6b39d…`)와 다르다. 세션 1이 기록한 대로 wasm 바이트 재현성은 보장되지 않는다. `data/` 이름·크기 목록은 모든 빌드에서 같다.
+
+검사 결과(`fd9e00e`, `03f580b` 모두 같은 수치):
 
 | 진입 | 참조 리소스 | HTTP 검사 | 결과 |
 | --- | --- | --- | --- |
@@ -180,9 +182,9 @@ python scripts/check-web-assets.py --entry game/taisei.html --url http://127.0.0
 - 세 진입 모두 `game/taisei.wasm`(유효, 섹션 11개, 공유 메모리 없음)과 `game/data/` 529개에 도달했고, 529개 모두 이름과 내용 SHA-256이 일치했다(정적·HTTP 양쪽).
 - 루트는 `<a href="game/index.html">`·meta refresh로 셸에 닿고, 셸은 `shell-config.js`의 `'taisei.js'`를 문서 기준으로 풀어 `game/taisei.js` → `game/taisei.wasm`으로 이어진다. `data/` 위치는 로더를 실행하는 문서(`game/index.html`) 기준 `game/data/`로 판정됐다.
 - `GET /` → `index.html`, `GET /game/` → `game/index.html`(200 `text/html`), 없는 경로·없는 `.wasm` → 404, `.wasm` → `application/wasm`, 전 응답 `no-store`·`nosniff`, COOP/COEP 없음(스레드 미사용이라 불필요).
-- 이 수정 전 검사기(PR #10 버전)는 `game/index.html` 진입에서 동적 주입 로더를 따라가지 못해 WASM·`data/`를 검사하지 않고 경고 1건으로 통과시켰다. 이 문서의 결과는 수정된 검사기 기준이다.
+- 이 수정 전 검사기(PR #10 버전)는 `game/index.html` 진입에서 동적 주입 로더를 따라가지 못해 WASM·`data/`를 검사하지 않고 경고 1건으로 통과시켰다(`fd9e00e` 산출물에서도 재현). 이 문서의 결과는 수정된 검사기 기준이다.
 
-브라우저 확인(Claude 데스크톱 내장 Chromium): `http://127.0.0.1:8080/`을 열면 `game/index.html`로 이동했고 시작 버튼을 누르자 인트로 장면(The Hakurei Shrine)까지 렌더링됐다. 리소스 250건 중 4xx/5xx 0건, `game/taisei.js`·`game/taisei.wasm`(4,538,726 B) 200, `data/` 요청 244건 모두 `/game/data/` 아래였다. 확인 시점에 버퍼에 남은 콘솔 오류는 0건이었으나 앞선 로그 888건은 버퍼에서 밀려나 확인하지 못했다. 조작·소리·플레이 판정은 세션 5 범위다.
+브라우저 확인(Claude 데스크톱 내장 Chromium, `03f580b` 산출물): `http://127.0.0.1:8080/`을 열면 `game/index.html`로 이동했고 시작 버튼을 누르자 인트로 장면(The Hakurei Shrine)까지 렌더링됐다. 리소스 250건 중 4xx/5xx 0건, `game/taisei.js`·`game/taisei.wasm`(4,538,726 B) 200, `data/` 요청 244건 모두 `/game/data/` 아래였다. 확인 시점에 버퍼에 남은 콘솔 오류는 0건이었으나 앞선 로그 888건은 버퍼에서 밀려나 확인하지 못했다. 조작·소리·플레이 판정은 세션 5 범위다. `fd9e00e` 산출물의 브라우저 진입은 세션 1·2가 #4·#5에 기록했으며 이 세션에서는 다시 하지 않았다.
 
 ## 탐색 검증: 기존 로컬 빌드 (공식 산출물 이전)
 
