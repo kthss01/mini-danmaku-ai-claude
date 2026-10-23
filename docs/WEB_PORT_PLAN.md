@@ -2,36 +2,56 @@
 
 현재 우선순위: 웹 수동 플레이 완성 → AI 연동 → 자동 회피 → 시각 표현.
 
-추적 이슈: [#2](https://github.com/kthss01/mini-danmaku-ai-claude/issues/2)
+추적 이슈: [#2](https://github.com/kthss01/mini-danmaku-ai-claude/issues/2) · 실행 안내: [WEB_SETUP.md](WEB_SETUP.md) · QA: [web/QA.md](web/QA.md)
 
 ## 목표
 AI에 앞서 Taisei를 브라우저에서 수동 플레이할 수 있게 전환한다. 기존 C 게임을 Emscripten/WebAssembly로 빌드하는 경로를 우선 사용한다.
 
 ## 근거와 범위
-- Windows 초기 실행은 bb6ddd3 및 docs/SETUP.md에 기록됨. 전체 수동 플레이는 미검증.
-- 고정 소스 5668c41b41f7227d21fc80cf56997d4d30356ce7에 misc/ci/emscripten-build.ini 존재.
-- 설정 파일의 존재는 웹 빌드·실행 성공을 의미하지 않는다.
+- Windows 초기 실행은 bb6ddd3 및 docs/SETUP.md에 기록됨. 데스크톱 전체 수동 플레이는 미검증.
+- 최초 고정 소스 5668c41b41f7227d21fc80cf56997d4d30356ce7에 misc/ci/emscripten-build.ini 존재. 현재 고정값은 fork PR kthss01/taisei#1 머지 커밋 f59212b72df3b68459b4677a6200e42be700078a(리소스 내려받기 실패 시 무한 재시도 대신 오류로 중단).
+- 설정 파일의 존재는 웹 빌드·실행 성공을 의미하지 않는다. 실제 결과는 아래 체크리스트의 근거 문서로 판단한다.
 - 이번 범위: 재현 가능한 웹 빌드, HTTP 제공, 브라우저 수동 플레이 검증, 문서, PR 및 머지.
 - AI 관측·제어·학습과 탄막 표현 변경은 웹 완료 이후.
 
+## 운영: 5개 세션 분할
+
+처음 계획한 `feat/web-playable` 단일 브랜치 대신 담당별 세션·브랜치로 나눠 진행했다. 단일 브랜치의 미커밋 초안은 원본 clone에 보존하고 각 담당 세션이 이관했다.
+
+| 세션 | 이슈 | 역할 | 브랜치 | 주요 PR(머지 커밋) |
+| --- | --- | --- | --- | --- |
+| 1 | #4 | 빌드·패키징·submodule 참조 | `feat/web-build` | #11(03f580b), #15(fd9e00e) |
+| 2 | #5 | fork 런타임·호환성·저장 | `feat/web-runtime` | #13(89f3728), fork kthss01/taisei#1(f59212b7) |
+| 3 | #6 | 웹 셸·로딩·시작·조작 안내 | `feat/web-shell` | #12(1ad54ea), #17(3fbe736) |
+| 4 | #7 | HTTP 서버·자산 검사 | `feat/web-serve` | #10(775df70), #16(6e77995), #18(fd6f865) |
+| 5 | #8 | 통합 QA·최종 문서 | `test/web-integration` | #9(7955e3a), 통합 QA PR |
+
+- 각 세션은 별도 clone을 쓰고, 산출물 계약(서빙 루트 `build/web/site`, 게임 `game/`)과 런타임 요구사항을 이슈 댓글로 먼저 공유했다.
+- 모든 PR은 검토 창구(브라우저의 Codex 대화)에 `[세션 N / 이슈 #번호]`, PR URL, head SHA, 검증 결과를 보고하고 Codex 검토 후 머지했다.
+- fork 수정은 세션 2가 fork PR로 머지하고, 메인 gitlink 갱신은 세션 1만 수행했다.
+- README·통합 문서와 최종 판정은 세션 5가 담당한다.
+
 ## 체크리스트
-- [ ] 최신 main과 기존 변경 확인 후 feat/web-playable 브랜치 생성
-- [ ] 공식 BUILD 문서, Emscripten CI·Meson·SDL·리소스 패키징 경로 조사
-- [ ] emsdk/Emscripten·빌드 이미지 버전 고정; 기존 Windows 빌드 보존
-- [ ] scripts/build-web 및 serve-web 제공(확장자는 환경에 맞게 선택)
-- [ ] 깨끗한 checkout + recursive submodule에서 웹 빌드 재현
-- [ ] HTML/JS/WASM/리소스를 빌드 산출물로 생성하고 Git 일반 커밋에서 제외
-- [ ] 웹 진입 화면에 로딩·시작·실패 상태와 조작 안내 제공
-- [ ] 실제 필요에 따라 WASM MIME, 리소스 상대 경로, 스레드 및 HTTP 헤더 확인
-- [ ] 브라우저 입력 포커스·스크롤 방지·포커스 해제 시 눌린 키 해제 검증
-- [ ] 사용자 클릭 후 사운드 시작, 메뉴·스테이지 진입·이동·공격·저속·봄·일시정지 확인
-- [ ] 최소 한 스테이지를 5분 이상 플레이(또는 먼저 종료되면 재진입), 콘솔·네트워크 오류 확인
-- [ ] 설정/리플레이 저장 후 새로고침 재조회·재생 검증; 미지원이면 범위와 원인을 명시하고 출시 차단 여부 판단
-- [ ] Chrome 또는 Edge 한 종을 필수로 실제 검증하고 브라우저·OS·해상도·FPS 측정 방법/결과 기록
-- [ ] docs/WEB_SETUP.md에 정확한 빌드·서빙 명령, 버전, URL, 검증 범위, 제약 작성
-- [ ] 라이선스·음악·이미지 고지와 배포 파일 포함 여부 확인
-- [ ] fork 수정이 필요하면 fork의 별도 브랜치→PR→머지를 먼저 완료하고 확정 커밋으로 submodule 갱신
-- [ ] 메인 저장소 PR 생성, 증거·잔여 문제 첨부, 리뷰 지적 수정 및 필수 검사 통과
+
+근거: 공식 검증 기록 [2026-10-24, main `fd6f865`](../tests/web-play/evidence/2026-10-24-chrome-official-fd6f865.md).
+
+- [x] 최신 main과 기존 변경 확인 후 작업 브랜치 생성 (5개 세션 분할로 대체)
+- [x] 공식 BUILD 문서, Emscripten CI·Meson·SDL·리소스 패키징 경로 조사 ([web/BUILD.md](web/BUILD.md), [web/RUNTIME.md](web/RUNTIME.md))
+- [x] emsdk/Emscripten·빌드 이미지 버전 고정; 기존 Windows 빌드 보존
+- [x] scripts/build-web 및 serve-web 제공 (`scripts/build-web.ps1`, `scripts/serve-web.py`, `scripts/check-web-assets.py`)
+- [x] 깨끗한 checkout + recursive submodule에서 웹 빌드 재현 (QA-01). 단, 새 clone + setup 직후 출처 기록에 줄바꿈 dirty가 남는 결함(#4)은 **미해결**: 수정 PR #25 검토 중, 머지 후 setup·작업 트리·provenance 표적 재검증 예정
+- [x] HTML/JS/WASM/리소스를 빌드 산출물로 생성하고 Git 일반 커밋에서 제외 (QA-02)
+- [x] 웹 진입 화면에 로딩·시작·실패 상태와 조작 안내 제공 (QA-10~13)
+- [x] 실제 필요에 따라 WASM MIME, 리소스 상대 경로, 스레드 및 HTTP 헤더 확인 (QA-04. pthreads 미사용으로 COOP/COEP 불필요)
+- [ ] 브라우저 입력 포커스·스크롤 방지·포커스 해제 시 눌린 키 해제 검증 — 포커스·스크롤 방지 확인(QA-20·21), **창 전환 시 키 해제·복귀는 사람 확인 대기**(QA-22·23)
+- [ ] 사용자 클릭 후 사운드 시작, 메뉴·스테이지 진입·이동·공격·저속·봄·일시정지 확인 — 메뉴·스테이지·이동·공격·일시정지 확인, 저속 속도 감소·봄 발동 확인, **실제 소리·피격 판정 표시·봄 탄 소거는 사람 확인 대기**(QA-37·34·35)
+- [x] 최소 한 스테이지를 5분 이상 플레이(또는 먼저 종료되면 재진입), 콘솔·네트워크 오류 확인 (QA-38, 누적 약 307초, 내장 Chromium. 오류 0건)
+- [x] 설정/리플레이 저장 후 새로고침 재조회·재생 검증 (QA-40 Chrome, QA-41 내장 Chromium)
+- [ ] Chrome 또는 Edge 한 종을 필수로 실제 검증하고 브라우저·OS·해상도·FPS 측정 방법/결과 기록 — Chrome 155 실검증 완료. 측정한 것은 rAF 콜백/초뿐이며 **Chrome 창을 앞에 둔 상태의 HUD FPS는 사람 확인 대기**(QA-39)
+- [x] docs/WEB_SETUP.md에 정확한 빌드·서빙 명령, 버전, URL, 검증 범위, 제약 작성
+- [x] 라이선스·음악·이미지 고지와 배포 파일 포함 여부 확인 (QA-14)
+- [x] fork 수정이 필요하면 fork의 별도 브랜치→PR→머지를 먼저 완료하고 확정 커밋으로 submodule 갱신 (kthss01/taisei#1 → #15)
+- [ ] 메인 저장소 PR 생성, 증거·잔여 문제 첨부, 리뷰 지적 수정 및 필수 검사 통과 — 세션 1~4 PR 머지 완료, 세션 5 통합 PR 검토 중
 - [ ] 검증한 PR head로 main에 머지하고 머지 커밋·문서·이슈 상태 정리
 
 ## 완료 조건
@@ -42,6 +62,8 @@ AI에 앞서 Taisei를 브라우저에서 수동 플레이할 수 있게 전환�
 5. PR이 생성·검토·머지되고 이슈에 PR 및 머지 커밋을 남긴다.
 6. 빌드만 성공하거나 제목 화면만 뜨면 완료 처리하지 않는다.
 
+현재 판정(2026-10-24): 6만 충족, 1~5는 **보류**. 1·3은 Ctrl+C 종료, 2는 소리·피격 판정 표시·봄 탄 소거, 4는 창 전환 키 해제·탭 복귀·Chrome HUD FPS와 #4 출처 결함, 5는 세션 5 통합 PR 머지가 남았다. 조건별 근거는 [web/QA.md](web/QA.md)의 "완료 판정" 표, 사람 확인 절차는 [공식 검증 기록](../tests/web-play/evidence/2026-10-24-chrome-official-fd6f865.md) 9절에 있다.
+
 ## PR/머지 규칙
 main 직접 push와 강제 push는 하지 않는다. 필수 검사·보호 규칙을 우회하지 않는다.
 Claude가 구현·검증·PR·머지를 맡고 Codex는 완료 diff를 검토한다.
@@ -51,5 +73,5 @@ Claude가 구현·검증·PR·머지를 맡고 Codex는 완료 diff를 검토한
 테스트·리뷰 결과에 문제가 없고 보호 규칙이 허용하면 별도 재확인 없이 머지한다.
 
 ## 배포 및 다음 단계
-우선 로컬 HTTP에서 플레이를 완료한다. 공개 호스팅은 대상·헤더 요구사항을 조사하여 제안하고, 미지정 대상을 임의로 공개하지 않는다.
+우선 로컬 HTTP에서 플레이를 완료한다. 공개 호스팅은 대상·헤더 요구사항을 조사하여 제안하고([web/SERVING.md](web/SERVING.md)), 미지정 대상을 임의로 공개하지 않는다.
 웹 완료 후 별도 이슈로 브라우저 환경의 상태 관측·입력 브리지를 설계한다. Python 연결 방식을 미리 고정하지 않는다.
