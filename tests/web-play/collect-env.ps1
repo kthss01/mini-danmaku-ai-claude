@@ -116,24 +116,46 @@ if ($SiteDirectory) {
         Write-Output "서빙 루트를 찾을 수 없음: $sitePath"
     } else {
         $site = [ordered]@{ '서빙 루트' = $sitePath }
-        # 빌드 시각·버전을 남기는 manifest 종류의 파일이 있으면 경로를 기록한다. 없으면 '없음'으로 둔다.
-        $manifest = Get-ChildItem -LiteralPath $sitePath -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^(manifest|build-info|version|BUILD)\.(json|txt|md)$' } |
-            Select-Object -First 1
-        if ($manifest) { $site['manifest'] = $manifest.Name } else { $site['manifest'] = '없음 (출처는 빌드 로그로 확인)' }
+        # 세션 1 계약(build/web/site 루트 + game/ 하위)과 평면 배치(루트에 taisei.html) 둘 다 지원한다.
+        $gameDir = $sitePath
+        if (Test-Path -LiteralPath (Join-Path $sitePath 'game\taisei.html')) {
+            $gameDir = Join-Path $sitePath 'game'
+            $site['게임 산출물 디렉터리'] = 'game/ (루트 셸 + game/ 하위 배치)'
+        } elseif (Test-Path -LiteralPath (Join-Path $sitePath 'taisei.html')) {
+            $site['게임 산출물 디렉터리'] = '. (평면 배치)'
+        } else {
+            $site['게임 산출물 디렉터리'] = 'taisei.html 없음'
+        }
+        # 빌드 시각·커밋·도구 버전을 남기는 manifest(세션 1의 build-info.json 등)가 있으면 기록한다.
+        # 파일 수정 시각은 복사·패키징으로 바뀌므로 빌드 시각이 아니다. 빌드 시각은 manifest나 빌드 로그에서만 가져온다.
+        $manifest = @($sitePath, $gameDir) | ForEach-Object {
+            Get-ChildItem -LiteralPath $_ -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^(manifest|build-info|provenance|version|BUILD)\.(json|txt|md)$' }
+        } | Select-Object -First 1
+        if ($manifest) {
+            $site['manifest'] = $manifest.FullName.Substring($sitePath.Length).TrimStart('\')
+            $site['manifest 내용'] = ((Get-Content -LiteralPath $manifest.FullName -Raw -ErrorAction SilentlyContinue) -replace '\s+', ' ').Trim()
+        } else {
+            $site['manifest'] = '없음 → 빌드 시각·출처 미확인 (빌드 로그로만 확인 가능)'
+        }
+        $targets = @()
+        foreach ($name in @('index.html', 'COPYING.txt')) { $targets += @{ Label = $name; Path = (Join-Path $sitePath $name) } }
         foreach ($name in @('taisei.html', 'taisei.js', 'taisei.wasm')) {
-            $file = Join-Path $sitePath $name
-            if (Test-Path -LiteralPath $file) {
-                $item = Get-Item -LiteralPath $file
-                $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-                $site["$name 수정 시각"] = $item.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
-                $site["$name 크기"] = "$($item.Length) bytes"
-                $site["$name SHA-256"] = $hash
+            $label = if ($gameDir -eq $sitePath) { $name } else { "game/$name" }
+            $targets += @{ Label = $label; Path = (Join-Path $gameDir $name) }
+        }
+        foreach ($target in $targets) {
+            if (Test-Path -LiteralPath $target.Path) {
+                $item = Get-Item -LiteralPath $target.Path
+                $hash = (Get-FileHash -LiteralPath $target.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+                $site["$($target.Label) 파일 수정 시각(빌드 시각 아님)"] = $item.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
+                $site["$($target.Label) 크기"] = "$($item.Length) bytes"
+                $site["$($target.Label) SHA-256"] = $hash
             } else {
-                $site[$name] = '없음'
+                $site[$target.Label] = '없음'
             }
         }
-        $dataDir = Join-Path $sitePath 'data'
+        $dataDir = Join-Path $gameDir 'data'
         if (Test-Path -LiteralPath $dataDir) {
             $dataFiles = Get-ChildItem -LiteralPath $dataDir -File -Recurse -ErrorAction SilentlyContinue
             $site['data/ 파일 수·용량'] = "$($dataFiles.Count)개, $([math]::Round(($dataFiles | Measure-Object Length -Sum).Sum / 1MB, 1)) MB"

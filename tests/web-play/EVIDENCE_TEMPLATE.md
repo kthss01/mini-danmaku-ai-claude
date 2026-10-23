@@ -33,13 +33,16 @@ git submodule status --recursive:
 | 항목 | 값 |
 | --- | --- |
 | 서빙 루트 경로 | |
+| 배치 형태 | 루트 셸 + `game/` 하위(세션 1 계약) / 평면 |
 | 생성 방법 | 이 기록에서 실행한 빌드 명령 / 기존 산출물 재사용 / 출처 미확인 |
-| 빌드 시각 (`taisei.wasm` 수정 시각) | |
+| 빌드 시각 | manifest(`build-info.json` 등) 또는 빌드 로그의 값만 기록. **파일 수정 시각은 빌드 시각이 아니다** |
+| 파일 수정 시각 (`taisei.wasm`) | 참고용 |
 | 빌드 도구 버전 (이미지·emsdk) | |
 | manifest 또는 버전 파일 | 있으면 경로와 내용 요약, 없으면 `없음` |
-| `taisei.html` SHA-256 | |
-| `taisei.js` SHA-256 | |
-| `taisei.wasm` SHA-256 | |
+| 루트 `index.html` SHA-256 | |
+| `game/taisei.html` SHA-256 | |
+| `game/taisei.js` SHA-256 | |
+| `game/taisei.wasm` SHA-256 | |
 
 출처가 `출처 미확인`이면 QA-01을 `성공`으로 표시하지 않는다.
 
