@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Taisei 웹 실행</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="stylesheet" href="shell.css">
+</head>
+<!-- data-state: checking | unsupported | ready | loading | playing | error | exited (shell.js가 바꾼다) -->
+<body data-state="checking">
+
+<!-- 게임 화면. canvas는 테두리·패딩이 없어야 마우스 좌표가 맞는다. -->
+<div id="game-root">
+    <canvas id="canvas" tabindex="0" aria-label="Taisei 게임 화면"></canvas>
+    <div id="focus-hint" hidden>게임 화면을 클릭하면 키 입력이 다시 전달됩니다.</div>
+</div>
+
+<!-- 게임 위에 겹치는 상태 패널 -->
+<div id="overlay">
+    <main id="panel">
+        <header>
+            <h1>Taisei Project 웹 버전</h1>
+            <p class="muted">원본 C 게임을 Emscripten(WebAssembly)으로 빌드한 실험용 실행 페이지입니다.</p>
+        </header>
+
+        <section data-view="checking" aria-live="polite">
+            <div class="spinner" aria-hidden="true"></div>
+            <p>브라우저 환경을 확인하는 중…</p>
+            <noscript><p class="error-text">이 페이지는 JavaScript가 필요합니다.</p></noscript>
+        </section>
+
+        <section data-view="unsupported">
+            <h2 class="error-text">이 브라우저에서는 실행할 수 없습니다</h2>
+            <ul id="unsupported-reasons"></ul>
+            <p class="muted">WebGL 2와 WebAssembly를 지원하는 최신 Chrome 또는 Edge에서 다시 열어주세요.</p>
+        </section>
+
+        <section data-view="ready">
+            <p>시작 버튼을 누르면 게임 코드와 데이터를 내려받습니다. 첫 실행은 수백 MB를 받을 수 있고, 이후에는 브라우저 저장소에 캐시됩니다.</p>
+            <button id="start" class="primary" type="button">게임 시작</button>
+            <p class="muted small">소리는 브라우저 정책상 시작 버튼을 누른 뒤 키를 누르거나 화면을 클릭한 시점부터 재생됩니다.</p>
+        </section>
+
+        <section data-view="loading" aria-live="polite">
+            <div class="spinner" aria-hidden="true"></div>
+            <p id="status">준비 중…</p>
+            <progress id="progress" max="100" value="0" hidden></progress>
+            <p id="status-detail" class="muted small"></p>
+            <p id="load-warning" class="error-text small"></p>
+        </section>
+
+        <section data-view="error">
+            <h2 class="error-text">게임을 실행하지 못했습니다</h2>
+            <p id="error-message"></p>
+            <pre id="error-detail" class="small"></pre>
+            <button id="retry" class="primary" type="button">다시 시도</button>
+            <p class="muted small">페이지를 새로 고쳐 처음부터 다시 불러옵니다. 문제가 계속되면 아래 로그를 확인해주세요.</p>
+        </section>
+
+        <section data-view="exited">
+            <h2>게임이 종료되었습니다</h2>
+            <p id="exit-message" class="muted"></p>
+            <button id="restart" class="primary" type="button">다시 시작</button>
+        </section>
+
+        <!-- 조작 안내: ready/unsupported/error 화면에 상시 표시, 플레이 중에는 HUD 버튼으로 연다 -->
+        <section id="controls" data-view="ready error exited unsupported">
+            <h2>조작 안내</h2>
+            <table>
+                <thead><tr><th>동작</th><th>기본 키</th></tr></thead>
+                <tbody>
+                    <tr><td>이동</td><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></td></tr>
+                    <tr><td>공격 · 메뉴 선택</td><td><kbd>Z</kbd></td></tr>
+                    <tr><td>봄 · 메뉴 취소</td><td><kbd>X</kbd></td></tr>
+                    <tr><td>특수 기술(파워 서지)</td><td><kbd>C</kbd></td></tr>
+                    <tr><td>저속 이동(피격 판정 표시)</td><td><kbd>Shift</kbd>(왼쪽)</td></tr>
+                    <tr><td>대화 건너뛰기</td><td><kbd>Ctrl</kbd>(왼쪽)</td></tr>
+                    <tr><td>일시정지 · 메뉴 뒤로</td><td><kbd>Esc</kbd></td></tr>
+                    <tr><td>소리 켜기/끄기</td><td><kbd>M</kbd></td></tr>
+                </tbody>
+            </table>
+            <p class="muted small">키는 게임 내 설정 메뉴에서 바꿀 수 있습니다. 브라우저 전체 화면은 <kbd>F11</kbd> 또는 화면 우측 상단 버튼을 사용합니다. 게임 패드 입력은 아직 웹에서 검증하지 않았습니다.</p>
+        </section>
+
+        <ul class="notes muted small" data-view="ready unsupported">
+            <li>WebGL 2를 지원하는 최신 Chrome 또는 Edge를 권장합니다. 원본은 브라우저 실행을 전제로 설계되지 않았으므로 데스크톱판보다 느릴 수 있습니다.</li>
+            <li>키 입력이 먹지 않으면 게임 화면을 한 번 클릭해 포커스를 맞춰주세요. 다른 창으로 전환하면 게임이 눌린 키를 해제하고 일시정지하도록 되어 있습니다(실제 브라우저에서의 확인은 진행 중).</li>
+            <li>설정과 리플레이는 이 브라우저의 IndexedDB에 저장됩니다. 사이트 데이터를 지우면 함께 삭제됩니다.</li>
+        </ul>
+    </main>
+</div>
+
+<!-- 플레이 중 HUD: 조작 안내·전체 화면·로그 -->
+<div id="hud" hidden>
+    <span id="hud-warning" class="small" hidden></span>
+    <span id="hud-status" class="small"></span>
+    <button id="hud-controls" type="button" title="조작 안내">조작</button>
+    <button id="hud-fullscreen" type="button" title="전체 화면 전환">전체 화면</button>
+    <button id="hud-log" type="button" title="게임 로그 보기">로그</button>
+</div>
+
+<!-- 플레이 중 조작 안내 팝업(HUD 버튼으로 열고 닫는다) -->
+<div id="controls-popover" hidden>
+    <div class="popover-body">
+        <button id="controls-close" type="button" class="close" aria-label="닫기">×</button>
+        <div id="controls-popover-content"></div>
+    </div>
+</div>
+
+<!-- 게임 stdout/stderr 로그 -->
+<div id="log-panel" hidden>
+    <textarea id="log" rows="10" readonly spellcheck="false"></textarea>
+</div>
+
+<footer id="footer">
+    <a href="https://taisei-project.org/" target="_blank" rel="noopener">Taisei Project</a> ·
+    <a id="license-link" href="COPYING.txt" target="_blank" rel="noopener">라이선스 고지</a> ·
+    <span>Web port powered by <a href="https://emscripten.org/" target="_blank" rel="noopener">Emscripten</a></span>
+</footer>
+
+<script src="shell-config.js"></script>
+<script src="shell.js"></script>
+</body>
+</html>
