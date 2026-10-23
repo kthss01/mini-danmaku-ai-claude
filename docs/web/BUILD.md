@@ -32,6 +32,8 @@ Set-Location mini-danmaku-ai-claude
 .\scripts\build-web.ps1
 ```
 
+`setup-taisei.ps1`은 Taisei 추적 파일 중 줄바꿈만 다른 파일을 커밋과 같은 LF로 맞춘다(조건과 안전 장치는 [SETUP.md](../SETUP.md)). 이 단계를 건너뛰었거나, 이전 버전으로 설정했거나, 안전 조건 때문에 정리를 건너뛴 clone은 줄바꿈 차이 때문에 `build.repositoryDirtyEntries`에 ` M game/taisei`가 기록될 수 있다. 컴파일은 컨테이너 안에서 커밋 기준으로 다시 checkout하므로 산출물에는 영향이 없지만, 깨끗한 checkout 재현 근거가 되려면 `git status --porcelain`이 비어 있어야 한다.
+
 | 옵션 | 동작 |
 | --- | --- |
 | (없음) | 컴파일·`meson install` 후 사이트 패키징. `build/web/install`이 이미 있으면 중단 |

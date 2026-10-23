@@ -58,6 +58,16 @@ git submodule update --init --recursive
 - 하위 submodule 초기화
 - 공식 저장소를 `upstream`으로 추가 또는 갱신
 - Taisei 저장소에만 `core.autocrlf=false` 적용
+- Windows Git 기본값(`core.autocrlf=true`)으로 CRLF 체크아웃된 Taisei 추적 파일을 커밋과 같은 LF로 정리(`scripts/lib/Repair-GitLineEndings.ps1`)
+
+줄바꿈 정리는 다음처럼 동작한다.
+
+- 대상은 인덱스가 LF이고 작업 트리가 CRLF인 추적 파일뿐이다. 각 파일의 CRLF를 LF로 바꾼 내용이 인덱스 blob과 같은지 해시로 확인한다. 모두 같을 때만 그 파일들을 같은 자리에서 LF로 다시 쓰고, 해당 인덱스 항목의 파일 정보만 갱신한다.
+- 인덱스를 지우거나 `reset`·`checkout`하지 않는다. 미추적 파일, 하위 submodule, 대상이 아닌 추적 파일은 쓰지 않는다.
+- 다음 중 하나라도 있으면 아무것도 바꾸지 않고 경고한다: 진행 중인 merge·rebase·cherry-pick·revert, sparse checkout, assume-unchanged·skip-worktree 항목, 수정·스테이징된 파일, 줄바꿈 외 내용이 다른 CRLF 파일.
+- 회귀 테스트: `powershell -NoProfile -File tests\setup-taisei\test-repair-line-endings.ps1`
+
+이 정리가 없으면 `git status`에 ` M game/taisei`가 보이고 웹 빌드 출처(`build-info.json`의 `repositoryDirtyEntries`)가 미커밋 변경으로 기록된다(이슈 #4). 이미 clone한 저장소도 `setup-taisei.ps1`을 다시 실행하면 정리된다. 경고로 건너뛴 경우에는 해당 상태를 직접 정리한 뒤 다시 실행한다.
 
 ## 빌드
 
