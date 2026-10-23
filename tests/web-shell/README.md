@@ -5,7 +5,7 @@
 ## 구성
 
 - `mock-taisei.js`: 실제 `taisei.js`와 같은 계약(전역 `createTaisei`, 인스턴스의 `initFilesystem`/`callMain`, `Module.setStatus`/`onFirstFrame`/`onAbort`/`onExit`)으로 동작하는 가짜 로더. URL 쿼리 `?mock=<시나리오>`로 상태 전환을 재현한다.
-- `stage-site.ps1`: `web/`와 게임 산출물(또는 mock)을 한 디렉터리로 모은다.
+- `stage-site.ps1`: 세션 1의 패키징 규칙과 같은 배치(`web/` → 루트, `web/game/` + 게임 산출물 또는 mock → `game/`)로 검증용 사이트를 만든다.
 
 ## mock 검증
 
@@ -14,7 +14,7 @@
 python -m http.server 8091 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-mock
 ```
 
-브라우저에서 `http://127.0.0.1:8091/index.html?mock=<시나리오>`를 연다.
+브라우저에서 `http://127.0.0.1:8091/game/index.html?mock=<시나리오>`를 연다(루트 `/index.html`은 `game/index.html`로 넘겨준다).
 
 | 시나리오 | 재현 내용 | 기대 상태 |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ python -m http.server 8091 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-m
 | `exit` | 첫 프레임 뒤 `onExit(0)` | `exited` |
 | `download-fail` | 로딩 중 리소스 내려받기 실패 메시지(`printErr`) | `loading`/`playing` 상태에 경고 표시 |
 
-로더 404는 스테이징 디렉터리의 `taisei.js`를 지운 뒤 시작 버튼을 눌러 확인한다(브라우저 캐시 때문에 새로고침이 필요할 수 있다).
+로더 404는 스테이징 디렉터리의 `game/taisei.js`를 지운 뒤 시작 버튼을 눌러 확인한다(브라우저 캐시 때문에 새로고침이 필요할 수 있다).
 
 mock에는 `background.webp`, `favicon.ico`가 없으므로 해당 404는 정상이다.
 

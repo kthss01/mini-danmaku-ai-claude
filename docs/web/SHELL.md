@@ -8,13 +8,14 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| `web/index.html` | 상태별 화면(환경 확인·미지원·시작·로딩·플레이·오류·종료), 조작 안내, HUD, 로그 패널 |
-| `web/shell.css` | 스타일. 상태 전환은 `body[data-state]`와 `section[data-view]`로만 제어 |
-| `web/shell.js` | 환경 확인, 로더 로딩, Module 콜백, 입력·포커스 정책, 오류 처리 |
-| `web/shell-config.js` | 게임 산출물과의 연결 지점(파일 이름·팩터리 이름). 계약이 바뀌면 이 파일만 수정 |
+| `web/index.html` | 서빙 루트 진입 페이지. `game/index.html`로 바로 넘긴다(meta refresh + `location.replace`) |
+| `web/game/index.html` | 게임 셸. 상태별 화면(환경 확인·미지원·시작·로딩·플레이·오류·종료), 조작 안내, HUD, 로그 패널 |
+| `web/game/shell.css` | 스타일. 상태 전환은 `body[data-state]`와 `section[data-view]`로만 제어 |
+| `web/game/shell.js` | 환경 확인, 로더 로딩, Module 콜백, 입력·포커스 정책, 오류 처리 |
+| `web/game/shell-config.js` | 게임 산출물과의 연결 지점(파일 이름·팩터리 이름). 계약이 바뀌면 이 파일만 수정 |
 | `tests/web-shell/` | mock 로더와 검증용 사이트 구성 스크립트([README](../../tests/web-shell/README.md)) |
 
-모든 경로는 페이지 기준 상대 경로다. `index.html`과 게임 산출물을 같은 디렉터리에 두면 어떤 하위 경로에서 서빙해도 동작한다.
+세션 1의 패키징 규칙([BUILD.md](BUILD.md), PR #11)대로 `web/`의 파일은 `build/web/site/` 루트로, `web/game/`의 파일은 `build/web/site/game/`으로 복사되어 `taisei.js`·`taisei.wasm`·`data/` 옆에 놓인다. 게임 셸이 `game/`에 있어야 하는 이유는 아래 "산출물 계약"의 `data/` 제약 때문이다. 모든 경로는 페이지 기준 상대 경로이므로 서빙 루트가 어느 하위 경로여도 동작한다. 업스트림 셸 `game/taisei.html`은 그대로 남지만 진입 URL은 `index.html`(→ `game/index.html`)이다.
 
 ## 상태 흐름
 
@@ -39,7 +40,7 @@ checking ─(미지원)→ unsupported
 
 ## 산출물 계약(세션 1 연결 지점)
 
-세션 1의 계약 댓글이 아직 없어, 현재 fork 고정 커밋(5668c41b)의 `src/meson.build`·`emscripten/preamble.js`와 실제 빌드 산출물(`scripts/build-web.ps1` 결과)을 근거로 다음을 가정한다. 변경되면 `web/shell-config.js`만 고친다.
+세션 1의 계약(이슈 #4 댓글, PR #11의 `docs/web/BUILD.md`)과 fork 고정 커밋(5668c41b)의 `src/meson.build`·`emscripten/preamble.js`, 실제 빌드 산출물을 근거로 한다. 파일 이름·팩터리 이름이 바뀌면 `web/game/shell-config.js`만 고친다.
 
 | 항목 | 현재 값 | 근거 |
 | --- | --- | --- |
@@ -50,7 +51,7 @@ checking ─(미지원)→ unsupported
 | 셸이 호출하는 인스턴스 메서드 | `await createTaisei(Module)` → `instance.initFilesystem()` → `instance.callMain()` | 업스트림 `shell.html` |
 | 기타 정적 파일 | `background.webp`, `favicon.ico`, `COPYING.txt` | 세션 1이 산출물에 포함 |
 
-**세션 1에 전달한 제약:** 리소스 URL `data/<id>`는 wasm 안의 상수이며 페이지 URL 기준이다. 게임 산출물을 `game/` 같은 하위 디렉터리에 두려면 `data/`는 그대로 `index.html` 옆에 있어야 한다(또는 셸 페이지를 산출물과 같은 디렉터리에 둔다). `gameBase`로 로더 위치만 바꿀 수 있고 `data/` 위치는 바꿀 수 없다.
+**`data/` 제약:** 리소스 URL `data/<id>`는 wasm 안의 상수이며 페이지 URL 기준이다(세션 1·2도 같은 결론). 그래서 `createTaisei`를 부르는 셸 페이지는 `data/`와 같은 디렉터리인 `site/game/`에 있어야 하고, 이 저장소에서는 `web/game/`에 둔다. `gameBase`로 로더 위치만 바꿀 수 있고 `data/` 위치는 바꿀 수 없다.
 
 ### 상태 문구 해석
 
@@ -82,6 +83,8 @@ checking ─(미지원)→ unsupported
 python -m http.server 8091 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-mock
 ```
 
+`stage-site.ps1`은 세션 1의 패키징과 같은 배치(`web/` → 루트, `web/game/` + 게임 산출물 → `game/`)를 만든다. 브라우저에서 `http://127.0.0.1:8091/index.html`(→ `game/index.html`)을 연다.
+
 2026-10-23, Claude 데스크톱 앱 내장 브라우저(Chromium), 1024×768 및 375×812(모바일 에뮬레이션)에서 확인:
 
 | 항목 | 결과 |
@@ -103,11 +106,12 @@ python -m http.server 8091 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-m
 python -m http.server 8137 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-real
 ```
 
-산출물: `scripts/build-web.ps1`(feat/web-playable 작업분, 미머지)로 만든 `build/taisei-web` — fork 커밋 5668c41b41f7227d21fc80cf56997d4d30356ce7, emsdk 5.0.3, `taisei.wasm` 4,538,726 B, `data/` 529개 파일 209 MB. 같은 날, 같은 내장 브라우저(Chromium, DPR 1.75)에서 확인:
+산출물: `scripts/build-web.ps1`(feat/web-playable 작업분, 미머지)로 만든 `build/taisei-web` — fork 커밋 5668c41b41f7227d21fc80cf56997d4d30356ce7, emsdk 5.0.3, `taisei.wasm` 4,538,726 B, `data/` 529개 파일 209 MB. 세션 1 PR #11의 `build/web/site` 자체는 아직 결합하지 않았고, 같은 배치(`game/` 하위)를 `stage-site.ps1`로 재현해 검증했다. 같은 날, 같은 내장 브라우저(Chromium, DPR 1.75)에서 확인:
 
 | 항목 | 결과 |
 | --- | --- |
-| 시작 클릭 → 로더·wasm 내려받기 → `Preparing…` → 리소스 프리페치 진행률(최대 1016) 표시 | 통과 |
+| 루트 `index.html` → `game/index.html` 리다이렉트, `ready` 표시 | 통과 |
+| 시작 클릭 → 로더·wasm 내려받기 → `Preparing…` → 리소스 프리페치 진행률(최대 1016) 표시, `data/` 요청이 `/game/data/`로 나감 | 통과 |
 | `onFirstFrame` → `playing` 전환, 인트로 컷신 렌더링 | 통과 |
 | Z/Ctrl/Esc 입력이 게임에 전달(컷신 진행·건너뛰기) → 메인 메뉴 | 통과 |
 | 방향키로 메뉴 이동, Start Story → 난이도 → 캐릭터 → 샷 선택 → Stage 1 진입 | 통과 |
@@ -128,7 +132,7 @@ python -m http.server 8137 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-r
 ### 검증하지 않은 것
 
 - Chrome/Edge 실제 브라우저 창에서의 전체 화면, 실제 창 전환 시 키 해제, 5분 이상 플레이·FPS·사운드 청취(세션 5 QA 범위)
-- 세션 1 최종 패키징 결과(`build/web/site`)와의 결합. 위 검증은 현재 산출물 레이아웃(모든 파일이 한 디렉터리)을 복사해 수행했다
+- 세션 1 `scripts/build-web.ps1`(PR #11)이 실제로 만든 `build/web/site`와의 결합. 위 검증은 같은 배치를 `stage-site.ps1`로 재현해 수행했다
 - 세션 4 서버(`scripts/serve-web.*`)와의 결합. 위 검증은 `python -m http.server`를 썼다(`.wasm`은 `application/wasm`으로 제공됨을 확인)
 
 ## 범위 제외

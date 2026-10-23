@@ -24,11 +24,17 @@ if (Test-Path -LiteralPath $Out) {
 New-Item -ItemType Directory -Path $Out | Out-Null
 $Out = (Resolve-Path -LiteralPath $Out).Path
 
-Copy-Item -Path (Join-Path $webDir '*') -Destination $Out -Recurse -Force
+# 세션 1의 패키징 규칙(docs/web/BUILD.md)과 같은 배치: web/game/ 제외 파일은 루트로, web/game/*는 game/으로.
+$gameOut = Join-Path $Out 'game'
+New-Item -ItemType Directory -Path $gameOut | Out-Null
+Get-ChildItem -LiteralPath $webDir -Force |
+    Where-Object { $_.Name -ne 'game' } |
+    ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $Out -Recurse -Force }
+Copy-Item -Path (Join-Path $webDir 'game\*') -Destination $gameOut -Recurse -Force
 
 if ($Mock) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'mock-taisei.js') -Destination (Join-Path $Out 'taisei.js')
-    Set-Content -LiteralPath (Join-Path $Out 'COPYING.txt') -Value 'mock license placeholder' -Encoding utf8
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'mock-taisei.js') -Destination (Join-Path $gameOut 'taisei.js')
+    Set-Content -LiteralPath (Join-Path $gameOut 'COPYING.txt') -Value 'mock license placeholder' -Encoding utf8
     Write-Host "Staged mock site at $Out"
 } else {
     $Game = (Resolve-Path -LiteralPath $Game).Path
@@ -39,11 +45,11 @@ if ($Mock) {
     }
     foreach ($name in @('taisei.js', 'taisei.wasm', 'background.webp', 'scythe.webp', 'favicon.ico', 'COPYING.txt', 'README.txt')) {
         $src = Join-Path $Game $name
-        if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $Out }
+        if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $gameOut }
     }
-    Copy-Item -LiteralPath (Join-Path $Game 'data') -Destination (Join-Path $Out 'data') -Recurse
+    Copy-Item -LiteralPath (Join-Path $Game 'data') -Destination (Join-Path $gameOut 'data') -Recurse
     Write-Host "Staged real game site at $Out (from $Game)"
 }
 
-Get-ChildItem -LiteralPath $Out -File | Select-Object Name, Length
-Write-Host "Serve with: python -m http.server 8090 --bind 127.0.0.1 --directory `"$Out`""
+Get-ChildItem -LiteralPath $gameOut -File | Select-Object Name, Length
+Write-Host "Serve with: python -m http.server 8090 --bind 127.0.0.1 --directory `"$Out`"  (open /index.html)"

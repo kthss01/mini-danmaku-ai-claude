@@ -1,7 +1,8 @@
 // Taisei 웹 셸과 게임 산출물(세션 1 빌드 결과) 사이의 연결 지점.
 // 산출물 계약이 바뀌면 이 파일만 수정한다. shell.js는 이 값만 참조한다.
 //
-// 현재 가정(세션 1 계약 확정 전, 실제 빌드 산출물 관찰 기준):
+// 세션 1 계약(이슈 #4, docs/web/BUILD.md): 패키징 시 web/game/* 가 build/web/site/game/ 에 덮어써지고,
+// 그 디렉터리에 taisei.js / taisei.wasm / data/ 가 함께 놓인다. 그래서 이 셸은 web/game/ 에 있다.
 // - 게임 로더: taisei.js (Emscripten MODULARIZE=1, EXPORT_NAME=createTaisei)
 // - taisei.wasm은 taisei.js가 자기 스크립트 URL 기준 상대 경로로 찾는다(locateFile 기본 동작).
 // - 리소스는 wasm 내부 상수 "data/<content_id>"로 fetch된다. 이 URL은 HTML 문서 URL 기준 상대 경로이므로
