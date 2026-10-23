@@ -14,7 +14,7 @@ Taisei 웹 빌드(HTML/JS/WASM/리소스)를 로컬에서 제공하는 명령과
 | WASM MIME | `application/wasm` 제공·검사 확인 |
 | 스레드(pthreads) | 현재 빌드는 사용하지 않음 → COOP/COEP 격리 헤더 불필요(옵션으로 제공) |
 | 리소스 경로 | `data/<sha256>` 상대 경로, 529개 207.1 MiB, 내용 해시 전부 일치 |
-| fixture 테스트 | 49개: Windows 48 통과 + symlink 권한 없어 1 skip, Linux(Docker python:3.12) 49 통과 (`tests/web-server`) |
+| fixture 테스트 | 55개: Windows 54 통과 + symlink 권한 없어 1 skip, Linux(Docker python:3.12) 54 통과 + Windows 전용 1 skip (`tests/web-server`) |
 | 공식 산출물 검사 | main `fd9e00e`(Taisei `f59212b7`)의 `build/web/site`: 진입 3종(`index.html`, `game/index.html`, `game/taisei.html`) 모두 통과. 직전 main `03f580b` 산출물도 같은 결과, 브라우저에서 루트 진입→시작→인트로 장면까지 리소스 실패 0 |
 | 탐색 검증(이전) | 기존 로컬 빌드 평면·중첩 배치 통과(HTTP 541건) |
 
@@ -81,6 +81,32 @@ python scripts/serve-web.py
 | 포트 사용 중·권한 없음 | `포트를 열 수 없습니다 … --port 0 으로 자동 선택하세요` | 3 |
 | Ctrl+C | `종료합니다.` | 0 |
 
+### Windows 포트 중복 바인딩 (세션 5 QA-05, 수정 완료)
+
+증상: Windows에서 `python -m http.server` 등이 이미 LISTEN 중인 포트로 `serve-web.py`를 실행하면 종료 코드 3 대신 "제공 중"을 출력하고 계속 실행됐다. 같은 포트에 LISTEN 소켓이 두 개 생기고 요청은 먼저 뜬 서버가 받는다. 세션 5가 #7에 보고했다.
+
+원인(실측, 2026-10-23): 두 번째 소켓이 이미 LISTEN 중인 `127.0.0.1` 포트에 `bind`할 때의 결과.
+
+| 먼저 뜬 소켓 | 나중 소켓 | Windows 11 / Python 3.12.2 | Linux / Python 3.12.15 |
+| --- | --- | --- | --- |
+| `SO_REUSEADDR` | `SO_REUSEADDR` | **bind 성공(중복 LISTEN)** | 거부 errno 98 |
+| 옵션 없음 | `SO_REUSEADDR` | 거부 WinError 10013 | 거부 errno 98 |
+| `SO_REUSEADDR` | `SO_EXCLUSIVEADDRUSE` | 거부 WinError 10048 | 해당 없음 |
+| `SO_EXCLUSIVEADDRUSE` | `SO_REUSEADDR` | 거부 WinError 10013 | 해당 없음 |
+
+표준 `http.server.HTTPServer`는 `allow_reuse_address = 1`이라 `SO_REUSEADDR`를 켠다. `python -m http.server`와 수정 전 `serve-web.py`가 둘 다 켜므로 첫 줄 조합이 되어 Windows에서만 중복 LISTEN이 됐다. 수정 전 테스트는 옵션 없는 소켓으로 포트를 막아 둘째 줄 조합만 확인했기 때문에 이 경우를 놓쳤다.
+
+수정: Windows에서는 서버 클래스(`WebAssetsServer`)가 `SO_REUSEADDR`를 끄고 `SO_EXCLUSIVEADDRUSE`로 bind한다. 먼저 뜬 서버의 옵션과 관계없이 bind가 실패해 종료 코드 3으로 끝나고, 우리 서버가 먼저 떠 있으면 나중 서버도 들어오지 못한다. Linux는 표준 동작을 그대로 쓴다. 요청 20건을 처리하고 닫은 뒤 같은 포트에 즉시 다시 bind되는 것도 확인했다.
+
+수정 전후를 실제 프로세스로 비교했다. `python -m http.server <port>`를 먼저 띄우고 `serve-web.py --port <port>`를 실행한 결과다.
+
+| 환경 | 수정 전 | 수정 후 |
+| --- | --- | --- |
+| Windows 11 / 3.12.2 | 5초 뒤에도 실행 중, "제공 중" 출력, LISTEN 소켓 2개, `GET /`은 기존 서버 응답 | 종료 코드 3(WinError 10048), LISTEN 1개, 기존 서버 응답 유지 |
+| Linux / 3.12.15 | 종료 코드 3(errno 98) | 종료 코드 3(errno 98) |
+
+회귀 테스트(`test_serve_web.py`)는 수정 전 코드에서 5개가 실패한다. 표준 서버 점유 시 bind 거부, 우리 서버 점유 시 bind 거부, Windows 소켓 옵션, 실제 프로세스 2종(표준 서버 점유·우리 서버 이중 실행)의 종료 코드 3이다. 프로세스 내 테스트는 `main()` 대신 `create_server`의 예외만 확인한다. 회귀로 bind가 성공하면 `serve_forever`에서 멈추기 때문이며, 실제로 수정 전 코드로 `main()`을 부르던 초기 테스트가 3시간 멈춘 일이 있었다. 종료 코드는 30초 제한이 있는 프로세스 테스트가 확인한다.
+
 ## 리소스 검사 도구
 
 ```bash
@@ -129,14 +155,14 @@ HTTP 검사(`--url`):
 python -m unittest discover -s tests/web-server -t tests/web-server -v
 ```
 
-결과(2026-10-23): 49개 테스트.
+결과(2026-10-24): 55개 테스트.
 
 | 환경 | 결과 |
 | --- | --- |
-| Windows 11, Python 3.12.2 | 48 통과, 1 skip(일반 사용자 권한으로 symlink 생성 불가, WinError 1314) |
-| Linux, Docker `python:3.12-slim`(3.12.15), `docker run --rm -v <clone>:/work -w /work python:3.12-slim python -m unittest discover -s tests/web-server -t tests/web-server` | 49 통과(symlink 테스트 포함) |
+| Windows 11, Python 3.12.2 | 54 통과, 1 skip(일반 사용자 권한으로 symlink 생성 불가, WinError 1314) |
+| Linux, Docker `python:3.12-slim`(3.12.15), `docker run --rm -v <clone>:/work -w /work python:3.12-slim python -m unittest discover -s tests/web-server -t tests/web-server` | 54 통과(symlink 테스트 포함), 1 skip(Windows 전용 소켓 옵션 확인) |
 
-포함 항목: index 제공, WASM/JS MIME, 중첩 상대 경로, 404, `no-store`/`nosniff`, 격리 헤더 on/off, 디렉터리 목록 차단, 경로 탈출 방지(`..`, 인코딩 역슬래시, 중첩 상위 경로, 루트 밖 symlink 파일·디렉터리), `--index`, 루트 부재·index 부재·포트 충돌 종료 코드, 문서 명령 그대로 자식 프로세스 실행·종료, 검사 도구의 누락·대소문자(추적 중단, Linux에서도 crash 없음)·절대 경로·루트 탈출·해시 불일치·잘못된 WASM·스레드 빌드 감지·잘못된 MIME 서버·HTML fallback 서버·진입 HTML 404(루트·중첩)·응답 없이 끊는 서버·접속 불가 검출, 동적 주입 로더 추적(문서 기준 해석, 누락 시 오류)·meta refresh 추적·`--require-wasm`.
+포함 항목: index 제공, WASM/JS MIME, 중첩 상대 경로, 404, `no-store`/`nosniff`, 격리 헤더 on/off, 디렉터리 목록 차단, 경로 탈출 방지(`..`, 인코딩 역슬래시, 중첩 상위 경로, 루트 밖 symlink 파일·디렉터리), `--index`, 루트 부재·index 부재·포트 충돌 종료 코드(표준 서버·우리 서버가 점유한 포트, 실제 프로세스 2종, 포트 반환), 문서 명령 그대로 자식 프로세스 실행·종료, 검사 도구의 누락·대소문자(추적 중단, Linux에서도 crash 없음)·절대 경로·루트 탈출·해시 불일치·잘못된 WASM·스레드 빌드 감지·잘못된 MIME 서버·HTML fallback 서버·진입 HTML 404(루트·중첩)·응답 없이 끊는 서버·접속 불가 검출, 동적 주입 로더 추적(문서 기준 해석, 누락 시 오류)·meta refresh 추적·`--require-wasm`.
 
 ## 공식 산출물 검증 (세션 1·3 머지 후)
 

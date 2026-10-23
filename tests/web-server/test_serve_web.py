@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import http.client
+import http.server
 import io
 import os
 import re
@@ -15,6 +17,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.request
 from pathlib import Path
@@ -208,6 +212,139 @@ class ServeWebMainTests(unittest.TestCase):
             blocker.close()
         self.assertEqual(code, serve_web.EXIT_BIND_FAILED)
         self.assertIn("--port", err)
+
+    def assert_bind_refused(self, port: int, **kwargs) -> None:
+        """같은 포트에 우리 서버 bind 가 OSError 로 거부되는지 확인한다.
+
+        main() 을 직접 부르면 회귀로 bind 가 성공할 때 serve_forever 에서 영원히 멈추므로(2026-10-23 실제로 3시간 정지),
+        프로세스 내 테스트는 create_server 의 예외만 확인한다. 종료 코드 3 은 시간 제한이 있는 프로세스 테스트가 확인한다.
+        """
+        try:
+            server = serve_web.create_server(FIXTURE_SITE, port=port, quiet=True, **kwargs)
+        except OSError:
+            return
+        server.server_close()
+        self.fail(f"127.0.0.1:{port} 가 이미 LISTEN 중인데 bind 가 성공했습니다(중복 LISTEN)")
+
+    def test_port_held_by_stdlib_http_server_is_refused_and_kept(self):
+        # python -m http.server 와 같은 표준 서버(SO_REUSEADDR 켬)가 점유한 포트. Windows 에서 중복 LISTEN 되던 경우.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "index.html").write_text("A-server", encoding="utf-8")
+
+            class QuietHandler(http.server.SimpleHTTPRequestHandler):
+                def log_message(self, *args):
+                    pass
+
+            other = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(QuietHandler, directory=tmp))
+            self.assertTrue(other.allow_reuse_address)
+            thread = threading.Thread(target=other.serve_forever, daemon=True)
+            thread.start()
+            port = other.server_address[1]
+            try:
+                self.assert_bind_refused(port)
+                # 기존 서버는 그대로 응답한다.
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as response:
+                    self.assertEqual(response.read(), b"A-server")
+            finally:
+                other.shutdown()
+                other.server_close()
+
+    def test_port_held_by_own_server_is_refused_and_kept(self):
+        with LiveServer(FIXTURE_SITE) as live:
+            port = live.server.server_address[1]
+            self.assert_bind_refused(port)
+            status, _, body = live.get("/")
+            self.assertEqual(status, 200)
+            self.assertEqual(body, (FIXTURE_SITE / "index.html").read_bytes())
+
+    def test_port_zero_released_after_close(self):
+        # --port 0 으로 뜬 서버가 요청을 처리하고 닫힌 뒤, 같은 포트를 바로 다시 열 수 있어야 한다.
+        with LiveServer(FIXTURE_SITE) as live:
+            port = live.server.server_address[1]
+            for _ in range(5):
+                status, _, _ = live.get("/game/game.wasm")
+                self.assertEqual(status, 200)
+        again = serve_web.create_server(FIXTURE_SITE, port=port, quiet=True)
+        again.server_close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows 전용 소켓 옵션")
+    def test_windows_uses_exclusive_bind(self):
+        server = serve_web.create_server(FIXTURE_SITE, port=0, quiet=True)
+        try:
+            self.assertEqual(server.socket.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE), 1)
+            self.assertEqual(server.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 0)
+        finally:
+            server.server_close()
+
+
+class ServeWebPortConflictProcessTests(unittest.TestCase):
+    """세션 5 재현 그대로 실제 프로세스 두 개로 확인한다: python -m http.server 점유 → serve-web.py 종료 코드 3."""
+
+    def test_cli_exits_3_when_python_http_server_holds_port(self):
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "index.html").write_text("A-process", encoding="utf-8")
+            probe = socket.socket()
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+            probe.close()
+            other = subprocess.Popen(
+                [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", tmp],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+            )
+            try:
+                body = None
+                for _ in range(50):
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as response:
+                            body = response.read()
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                self.assertEqual(body, b"A-process", "python -m http.server 가 뜨지 않았습니다")
+                ours = subprocess.run(
+                    [sys.executable, str(SCRIPTS_DIR / "serve-web.py"), "--root", str(FIXTURE_SITE), "--port", str(port)],
+                    capture_output=True, text=True, encoding="utf-8", env=env, timeout=30,
+                )
+                self.assertEqual(ours.returncode, serve_web.EXIT_BIND_FAILED, ours.stdout + ours.stderr)
+                self.assertNotIn("제공 중", ours.stdout)
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
+                    self.assertEqual(response.read(), b"A-process")
+            finally:
+                other.terminate()
+                other.wait(timeout=10)
+
+    def test_cli_exits_3_when_own_server_holds_port(self):
+        # serve-web.py 를 같은 포트로 두 번 실행: 두 번째는 종료 코드 3, 첫 번째는 계속 응답한다.
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        first = subprocess.Popen(
+            [sys.executable, "-u", str(SCRIPTS_DIR / "serve-web.py"), "--root", str(FIXTURE_SITE), "--port", "0"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", env=env,
+        )
+        try:
+            port = None
+            for _ in range(20):
+                line = first.stdout.readline()
+                if not line:
+                    break
+                match = re.search(r"http://127\.0\.0\.1:(\d+)/", line)
+                if match:
+                    port = int(match.group(1))
+                    break
+            self.assertIsNotNone(port, "첫 서버의 URL 안내 줄을 찾지 못했습니다")
+            second = subprocess.run(
+                [sys.executable, str(SCRIPTS_DIR / "serve-web.py"), "--root", str(FIXTURE_SITE / "game"),
+                 "--index", "game.html", "--port", str(port)],
+                capture_output=True, text=True, encoding="utf-8", env=env, timeout=30,
+            )
+            self.assertEqual(second.returncode, serve_web.EXIT_BIND_FAILED, second.stdout + second.stderr)
+            self.assertIn("포트를 열 수 없습니다", second.stderr)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
+                self.assertEqual(response.read(), (FIXTURE_SITE / "index.html").read_bytes())
+        finally:
+            first.terminate()
+            first.wait(timeout=10)
+            first.stdout.close()
 
 
 class ServeWebCommandLineTests(unittest.TestCase):
