@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Taisei 웹 실행</title>
+    <!-- 게임 셸은 리소스(data/) 상대 경로 제약 때문에 game/ 디렉터리에 있다. 이 페이지는 그리로 넘겨주기만 한다. -->
+    <meta http-equiv="refresh" content="0; url=game/index.html">
+    <link rel="icon" type="image/x-icon" href="game/favicon.ico">
+    <style>
+        html, body { margin: 0; min-height: 100%; background: #111; color: #eee; font-family: system-ui, "Segoe UI", "Malgun Gothic", sans-serif; }
+        main { max-width: 480px; margin: 20vh auto; padding: 24px; text-align: center; }
+        a { color: #6db0ed; font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+<main>
+    <p>게임 페이지로 이동합니다…</p>
+    <p><a href="game/index.html">자동으로 넘어가지 않으면 여기를 누르세요</a></p>
+</main>
+<script>window.location.replace('game/index.html');</script>
+</body>
+</html>
