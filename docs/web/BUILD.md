@@ -117,6 +117,50 @@ build/web/
 
 ## 검증 결과
 
+### 공식 빌드 (Taisei `f59212b7`, 메인 `797f880`, 최신)
+
+gitlink 갱신 커밋 `797f880`을 만든 뒤 작업 트리에 미커밋 변경이 없는 상태에서 `.\scripts\build-web.ps1 -Force`로 빌드했다. main에 머지된 세션 3 셸(`web/`)이 함께 패키징됐다. 이후 커밋은 이 절을 기록한 문서 변경뿐이며 빌드 입력 파일은 바뀌지 않았다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 종료 코드 | 0 |
+| 소요 시간 | 4분 31초 (emsdk 캐시 사용) |
+| `build.taiseiCommit` | `f59212b72df3b68459b4677a6200e42be700078a` |
+| `build.repositoryCommit` | `797f88000b67b88c9f583bbff3e64648fc13d9e7` |
+| 미커밋 변경 (메인·Taisei·`web/`) | 없음 |
+| 빌드 시각(UTC) | 시작 `2026-10-23T12:31:22Z`, 종료 `2026-10-23T12:35:37Z` |
+| `site.entry` | `game/index.html` |
+| `site/` 파일 수 | 549 (`build-info.json` 제외) |
+| `site/` 총 용량 | 222,408,181 바이트 (`build-info.json` 제외) |
+| `data/` | 529개, 217,186,447 바이트 (`5668c41b` 빌드와 같은 목록) |
+
+| 파일 | 크기 (바이트) | SHA-256 |
+| --- | --- | --- |
+| `game/taisei.wasm` | 4,539,198 | `76f6b39da5aa417fd41c7cbfb59da4216df0e7a3f1f02feb3c8be97fd1826192` |
+| `game/taisei.js` | 101,107 | `d49ca968c16d0a69cc275f21a2f537db51c151a25401781c911149c328c73a01` |
+| `game/taisei.html` | 12,168 | `113240a898a555b79b8dcfa49c75fe5aa89a68831c377431347e8127ca3ac555` |
+| `index.html` | - | `f0728725fe9680f3d19832f9693e6bb9a1a279d5c822cf5f58fbc10c68626b16` |
+| `game/index.html` | - | `0a8b31f86be3f7b53cce0d3ae88d7d49ea5ac02e5c652597ab4d439596c08f2d` |
+| `game/shell.js` | - | `aee98beb3689e41ba1bbe20ed10524034651b3271ad411a559403d908f8c8d57` |
+| `COPYING.txt` | 2,529 | `507ba6eaceaf6fd923246480f53932b25a1ebbb25b2dd19c4f37bfc5fc83795a` |
+
+`taisei.js`와 `taisei.wasm`은 fork 수정이 반영되어 `5668c41b` 빌드보다 커졌다. 전체 해시 목록은 `build/web/site/build-info.json`에 있다.
+
+서빙·자산 검사(세션 4 도구, `python scripts/serve-web.py --port 8762`):
+
+| 검사 명령 진입 | 결과 |
+| --- | --- |
+| `--entry game/taisei.html --verify-hashes --sample-data -1` | 통과. 오류 0, 경고 0. HTTP 539건 실패 0. `taisei.wasm` 유효(섹션 11개), `data/` 529개 내용 해시 일치 |
+| 기본 진입(`index.html`), `--entry game/index.html` | 통과(오류 0). 세션 3 셸이 `taisei.js`를 동적으로 불러와 도구가 wasm 참조를 추적하지 못해 `no-wasm` 경고 1건 |
+
+브라우저 진입 확인(Claude 데스크톱 앱 내장 Chromium, 빈 IndexedDB 포트):
+
+- `http://127.0.0.1:8762/` → `game/index.html`로 이동, `window.taiseiShell.state`는 `ready`
+- "게임 시작" 클릭 후 약 20초 시점: `state=playing`, `hadFirstFrame=true`, `downloadErrors`·셸 `errors` 없음
+- `game/taisei.wasm` 200, `data/` 요청 244건 모두 `/game/data/`, 400 이상 응답 없음
+
+조작·오디오·저장과 실제 Chrome/Edge 검증은 세션 5의 공식 QA 범위다.
+
 ### 깨끗한 clone 재현 (Taisei `5668c41b`)
 
 새 디렉터리에 `git clone --recurse-submodules`로 받은 뒤 `.\scripts\build-web.ps1`을 실행했다. emsdk는 이전 실행에서 채운 named volume을 재사용했다.
