@@ -58,6 +58,9 @@ git submodule update --init --recursive
 - 하위 submodule 초기화
 - 공식 저장소를 `upstream`으로 추가 또는 갱신
 - Taisei 저장소에만 `core.autocrlf=false` 적용
+- Windows Git 기본값(`core.autocrlf=true`)으로 CRLF 체크아웃된 Taisei 작업 트리를 커밋과 같은 LF로 다시 체크아웃. 실제 수정이나 스테이징된 변경이 있으면 건드리지 않고 경고만 출력한다. 미추적 파일과 하위 submodule은 그대로 둔다.
+
+이 정규화가 없으면 `git status`에 ` M game/taisei`가 보이고 웹 빌드 출처(`build-info.json`의 `repositoryDirtyEntries`)가 미커밋 변경으로 기록된다(이슈 #4). 이미 clone한 저장소도 `setup-taisei.ps1`을 다시 실행하면 정리된다.
 
 ## 빌드
 
