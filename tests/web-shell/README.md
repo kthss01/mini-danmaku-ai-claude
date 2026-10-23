@@ -5,7 +5,8 @@
 ## 구성
 
 - `mock-taisei.js`: 실제 `taisei.js`와 같은 계약(전역 `createTaisei`, 인스턴스의 `initFilesystem`/`callMain`, `Module.setStatus`/`onFirstFrame`/`onAbort`/`onExit`)으로 동작하는 가짜 로더. URL 쿼리 `?mock=<시나리오>`로 상태 전환을 재현한다.
-- `stage-site.ps1`: 세션 1의 패키징 규칙과 같은 배치(`web/` → 루트, `web/game/` + 게임 산출물 또는 mock → `game/`)로 검증용 사이트를 만든다.
+- `stage-site.ps1`: 세션 1의 패키징 규칙과 같은 배치(`web/` → 루트, `web/game/` + 게임 산출물 또는 mock → `game/`)로 검증용 사이트를 만든다. 출력 경로는 저장소·`web/`·게임 산출물 밖의 새 디렉터리이거나 이 도구가 만든(`.taisei-shell-stage` marker가 있는) 디렉터리여야 하며, 그 밖의 기존 디렉터리는 지우지 않는다. 입력 검증은 삭제보다 먼저 한다.
+- `test-stage-site.ps1`: 위 안전 규칙을 임시 fixture로 검증한다(실행: `powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\web-shell\test-stage-site.ps1`).
 
 ## mock 검증
 
@@ -26,7 +27,9 @@ python -m http.server 8091 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-m
 | `nofactory` | 로더가 `createTaisei`를 정의하지 않음 | `error`(계약 불일치) |
 | `crash` | 첫 프레임 뒤 비동기 예외 | `error`, 게임 화면은 뒤에 남음 |
 | `exit` | 첫 프레임 뒤 `onExit(0)` | `exited` |
-| `download-fail` | 로딩 중 리소스 내려받기 실패 메시지(`printErr`) | `loading`/`playing` 상태에 경고 표시 |
+| `download-fail` | 수정 전 빌드처럼 로딩 중 내려받기 실패를 로그(`print`)로만 반복 | `loading`/`playing` 상태에 경고 표시 |
+| `asset-fatal` | fork PR #1 계약: `setStatus("Error: Failed to download …")` 뒤 필수 리소스 누락으로 `onAbort` | `error`, 상세에 URL·HTTP 상태 |
+| `asset-optional` | 첫 프레임 뒤 선택 리소스 실패를 `setStatus("Error: …")`로 알리고 계속 | `playing` 유지 + HUD 경고 배지 |
 
 로더 404는 스테이징 디렉터리의 `game/taisei.js`를 지운 뒤 시작 버튼을 눌러 확인한다(브라우저 캐시 때문에 새로고침이 필요할 수 있다).
 

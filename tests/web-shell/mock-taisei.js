@@ -11,7 +11,9 @@
  *   nofactory     로더가 createTaisei를 정의하지 않음
  *   crash         첫 프레임 이후 비동기 예외(window error)
  *   exit          첫 프레임 이후 onExit(0)
- *   download-fail 로딩 중 리소스 내려받기 실패 메시지(printErr) 재현
+ *   download-fail 수정 전 빌드처럼 로딩 중 리소스 내려받기 실패를 printErr 로그로만 알림
+ *   asset-fatal   fork PR #1 계약: setStatus("Error: Failed to download …") 뒤 필수 리소스 누락으로 onAbort
+ *   asset-optional fork PR #1 계약: 첫 프레임 뒤 선택 리소스 내려받기 실패를 setStatus("Error: …")로 알리고 계속 플레이
  *   slow          각 단계 지연을 길게 해 진행 표시를 눈으로 확인
  */
 (function () {
@@ -60,10 +62,22 @@
             throw new WebAssembly.RuntimeError('Aborted(mock: Cannot enlarge memory arrays)');
         }
         if (scenario === 'download-fail') {
-            printErr('Failed to download data/0123456789abcdef (status 404: Not Found)');
+            // 수정 전 빌드는 log_error를 Module.print로 내보낸다(printErr가 아님).
+            print('E: vfs/emscripten_fetch>fetch_onerror: Failed to download data/0123456789abcdef (status 404: Not Found)');
         }
 
         setStatus('All downloads complete.');
+
+        if (scenario === 'asset-fatal') {
+            // emscripten_fetch.c(fork PR #1): 포기 → setStatus("Error: …", true) → 필수 리소스면 log_fatal → abort
+            await sleep(stepDelay);
+            print('E: vfs/emscripten_fetch>vfs_fetch_open: Giving up on data/6e3e30da79a2d3206b95e99bcdcdd2e7a0e1a52f1ba75c9b03a89d0dd9012656 after 1 attempt(s); last HTTP status 404');
+            setStatus('Error: Failed to download data/6e3e30da79a2d3206b95e99bcdcdd2e7a0e1a52f1ba75c9b03a89d0dd9012656 (HTTP status 404)', true);
+            await sleep(stepDelay);
+            print("F: resource>load_resource_finish: Required font 'standard_cjk' couldn't be loaded");
+            if (Module.onAbort) Module.onAbort('Aborted()');
+            throw new WebAssembly.RuntimeError('Aborted(). Build with -sASSERTIONS for more info.');
+        }
 
         var running = false;
         var pressed = {};
@@ -135,6 +149,18 @@
                         running = false;
                         if (Module.onExit) Module.onExit(0);
                     }, stepDelay * 5);
+                    return;
+                }
+                if (scenario === 'asset-optional') {
+                    // 선택 리소스 실패: 런타임은 경고만 남기고 계속 진행한다. 이후 상태 갱신이 경고를 덮지 않아야 한다.
+                    await sleep(stepDelay * 2);
+                    setStatus('Error: Failed to download data/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef (HTTP status 404)', true);
+                    print('W: resource>load_resource_finish: optional texture could not be loaded; continuing');
+                    for (var j = 0; j <= 10; j++) {
+                        await sleep(80);
+                        setStatus(j >= 10 ? '' : 'Prefetching resources… (' + j + '/10)', true);
+                    }
+                    print('mock: continuing after optional asset failure');
                     return;
                 }
                 // emscripten_fetch.c의 update_dl_status와 같은 형식의 프리페치 진행

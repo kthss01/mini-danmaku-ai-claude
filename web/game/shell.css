@@ -218,6 +218,7 @@ pre#error-detail:empty { display: none; }
     opacity: 0.35;
     transition: opacity 0.2s;
 }
+#hud[hidden] { display: none; }
 #hud:hover, #hud:focus-within { opacity: 1; }
 #hud button {
     padding: 4px 10px;
@@ -234,6 +235,18 @@ pre#error-detail:empty { display: none; }
     color: var(--muted);
 }
 #hud-status:empty { display: none; }
+#hud-warning {
+    padding: 4px 8px;
+    background: rgba(80, 0, 0, 0.8);
+    border: 1px solid var(--error);
+    border-radius: 4px;
+    color: var(--error);
+    max-width: 50vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#hud-warning[hidden] { display: none; }
 
 #controls-popover {
     position: fixed;

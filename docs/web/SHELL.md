@@ -55,7 +55,18 @@ checking ─(미지원)→ unsupported
 
 ### 상태 문구 해석
 
-`Module.setStatus(text, force)`는 업스트림 셸과 같은 형식 `"문구 (현재/전체)"`를 받아 한국어 문구와 진행률로 바꾼다. 30ms 안의 연속 갱신은 건너뛴다. `playing` 중에 오는 문구(리소스 프리페치)는 HUD 왼쪽에 작게 표시한다. `printErr`에 `Failed to download`가 오면 로딩 화면과 HUD에 경고를 띄운다(게임은 내부에서 무한 재시도하므로 원인은 서버/산출물에서 해결해야 한다).
+`Module.setStatus(text, force)`는 업스트림 셸과 같은 형식 `"문구 (현재/전체)"`를 받아 한국어 문구와 진행률로 바꾼다. 30ms 안의 연속 갱신은 건너뛴다. `playing` 중에 오는 문구(리소스 프리페치)는 HUD 왼쪽에 작게 표시한다.
+
+### 리소스 내려받기 오류 계약(세션 2 fork PR [kthss01/taisei#1](https://github.com/kthss01/taisei/pull/1))
+
+| 런타임 동작 | 셸 처리 |
+| --- | --- |
+| 내려받기를 포기하면 `Module.setStatus("Error: Failed to download <url> (HTTP status N)", true)` | `Error:`로 시작하는 문구는 상태가 아니라 **내려받기 오류**로 보존(`taiseiShell.downloadErrors`)하고 로딩 화면의 경고 줄과 HUD 경고(빨간 배지)에 표시한다. 이후 상태 갱신이 경고를 덮지 않는다 |
+| 필수 리소스면 `log_fatal` → `abort()` → `Module.onAbort` | 오류 패널에 "리소스 내려받기 실패가 원인일 수 있습니다"를 덧붙이고 상세 첫 줄에 마지막 내려받기 오류(URL·HTTP 상태)를 넣는다 |
+| 선택 리소스면 로그만 남기고 계속 진행 | 셸은 게임을 멈추지 않는다. 경고 배지만 남는다 |
+| 수정 전 빌드(무한 재시도)는 `setStatus`를 보내지 않고 `Module.print`로 `Failed to download …`를 반복 출력 | 첫 문구를 같은 경고로 보여준다(재시도는 런타임이 계속하므로 원인은 서버/산출물에서 해결) |
+
+로더가 `Error:` 접두사를 다른 용도로 쓰지 않는다는 전제이며, Emscripten 자체는 `setStatus`에 그런 문구를 보내지 않는다(업스트림 셸은 `window.onerror`에서만 `Error:`를 만든다).
 
 ## 입력·오디오·포커스 정책(세션 2와 분담)
 
@@ -96,8 +107,20 @@ python -m http.server 8091 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-m
 | 창 blur/focus 시 안내 표시/숨김 | 통과(합성 이벤트) |
 | `reject`, `abort`, `contract`, `nofactory`, 로더 404 → `error` + 원인 메시지 | 통과 |
 | `crash` → `error`(게임 화면 유지), `exit` → `exited` | 통과 |
-| `download-fail` → 경고 문구 표시 | 통과 |
+| `download-fail`(수정 전 빌드식 로그) → 경고 문구 표시 | 통과 |
+| `asset-fatal`(`setStatus("Error: …")` → abort) → `error`, 상세 첫 줄에 URL·HTTP 404 | 통과 |
+| `asset-optional`(첫 프레임 뒤 `setStatus("Error: …")`) → `playing` 유지, HUD 경고 배지가 이후 상태 갱신에 덮이지 않음 | 통과 |
+| 로그 패널을 연 채 500줄 초과 → 표시 버퍼도 500줄로 유지 | 통과 |
+| `ready`/`error` 상태에서 HUD 숨김 | 통과(초기 구현은 `display:flex`가 `hidden`을 덮어 HUD가 항상 보였음, 수정) |
 | WebGL 2 없음 → `unsupported`(getContext를 null로 바꿔 재실행) | 통과 |
+
+`stage-site.ps1`의 원본 삭제 방지 규칙(저장소·`web/`·게임 산출물과 겹치는 출력 거부, marker 없는 기존 디렉터리 거부, 입력 검증을 삭제보다 먼저)은 임시 fixture로 검증한다:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\web-shell\test-stage-site.ps1
+```
+
+결과: 23개 검사 모두 통과(`All stage-site safety checks passed`, 종료 코드 0).
 
 ### B. 실제 WASM 통합 검증
 
@@ -122,6 +145,18 @@ python -m http.server 8137 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-r
 | 오디오 | 통과. `AudioContext`를 감싸 관찰: 시작 클릭 후 SDL이 만든 컨텍스트가 `running`(48 kHz), 드라이버 `emscripten`. 실제 소리 청취는 내장 브라우저에서 확인하지 못함(세션 5) |
 | 전체 화면 버튼 | 내장 브라우저 창에서는 요청이 완료되지 않음. 핸들러 배선은 확인(사용자 제스처 없는 호출은 `Permissions check failed` 로그). **실제 Chrome/Edge에서 수동 확인 필요** |
 | 창 전환 시 키 해제 | 자동화로 실제 blur를 만들 수 없어 **미검증** |
+
+#### B-2. 세션 2 수정 빌드로 필수 리소스 누락 검증
+
+세션 2 fork PR #1(head 947edc6b)로 만든 빌드(`taisei.wasm` SHA-256 `0fe02b5d…`, 세션 2 clone의 `build/web-fix`를 복사)를 `stage-site.ps1 -Game`으로 배치한 뒤 `game/data/6e3e30da…`(폰트 `SourceHanSans-Regular-0.ttf`) 1개를 지우고 새 포트(빈 IndexedDB)에서 시작:
+
+| 항목 | 결과 |
+| --- | --- |
+| 해당 URL 요청 횟수 | 1회(404), 재시도 없음 |
+| 로딩 화면 경고 줄 | `리소스 내려받기 실패: Failed to download data/6e3e30da… (HTTP status 404)` |
+| 이후 `Required font 'standard_cjk' couldn't be loaded` → abort | `error` 상태, 메시지 "게임 모듈이 비정상 종료되었습니다(abort). 리소스 내려받기 실패가 원인일 수 있습니다.", 상세 첫 줄에 같은 URL·HTTP 404 |
+
+선택 리소스 실패 후 계속 플레이하는 경우는 실제 빌드에서 어떤 리소스가 선택인지 특정하지 못해 mock(`asset-optional`)으로만 확인했다.
 
 게임 쪽 로그에 남은 오류(셸 범위 밖, 담당 세션에 전달):
 

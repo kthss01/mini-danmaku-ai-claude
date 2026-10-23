@@ -80,12 +80,12 @@
                     <tr><td>소리 켜기/끄기</td><td><kbd>M</kbd></td></tr>
                 </tbody>
             </table>
-            <p class="muted small">키는 게임 내 설정 메뉴에서 바꿀 수 있습니다. 브라우저 전체 화면은 <kbd>F11</kbd> 또는 화면 우측 상단 버튼을 사용합니다. 게임 패드는 브라우저가 지원하는 범위에서 동작합니다.</p>
+            <p class="muted small">키는 게임 내 설정 메뉴에서 바꿀 수 있습니다. 브라우저 전체 화면은 <kbd>F11</kbd> 또는 화면 우측 상단 버튼을 사용합니다. 게임 패드 입력은 아직 웹에서 검증하지 않았습니다.</p>
         </section>
 
         <ul class="notes muted small" data-view="ready unsupported">
             <li>WebGL 2를 지원하는 최신 Chrome 또는 Edge를 권장합니다. 원본은 브라우저 실행을 전제로 설계되지 않았으므로 데스크톱판보다 느릴 수 있습니다.</li>
-            <li>키 입력이 먹지 않으면 게임 화면을 한 번 클릭해 포커스를 맞춰주세요. 다른 창으로 전환하면 눌린 키는 해제됩니다.</li>
+            <li>키 입력이 먹지 않으면 게임 화면을 한 번 클릭해 포커스를 맞춰주세요. 다른 창으로 전환하면 게임이 눌린 키를 해제하고 일시정지하도록 되어 있습니다(실제 브라우저에서의 확인은 진행 중).</li>
             <li>설정과 리플레이는 이 브라우저의 IndexedDB에 저장됩니다. 사이트 데이터를 지우면 함께 삭제됩니다.</li>
         </ul>
     </main>
@@ -93,6 +93,7 @@
 
 <!-- 플레이 중 HUD: 조작 안내·전체 화면·로그 -->
 <div id="hud" hidden>
+    <span id="hud-warning" class="small" hidden></span>
     <span id="hud-status" class="small"></span>
     <button id="hud-controls" type="button" title="조작 안내">조작</button>
     <button id="hud-fullscreen" type="button" title="전체 화면 전환">전체 화면</button>

@@ -37,6 +37,7 @@
         unsupportedReasons: $('unsupported-reasons'),
         hud: $('hud'),
         hudStatus: $('hud-status'),
+        hudWarning: $('hud-warning'),
         hudControls: $('hud-controls'),
         hudFullscreen: $('hud-fullscreen'),
         hudLog: $('hud-log'),
@@ -57,22 +58,33 @@
         instance: null,
         hadFirstFrame: false,
         lastStatus: '',
+        // 런타임이 포기한 리소스 내려받기 오류(fork PR #1 계약: setStatus("Error: Failed to download <url> (HTTP status N)")).
+        // 치명적 abort가 뒤따르면 오류 상세에 함께 보여주고, 선택 리소스면 경고로만 남긴다.
+        downloadErrors: [],
         logLines: [],
         errors: [],
     };
     window.taiseiShell = shell;
 
     var LOG_LIMIT = 500;
+    shell.log = log; // 검증용: 로그 버퍼 동작을 밖에서 확인할 수 있게 노출
 
     // ---------- 로그 ----------
     function log(text) {
         shell.logLines.push(text);
+        var trimmed = false;
         if (shell.logLines.length > LOG_LIMIT) {
             shell.logLines.splice(0, shell.logLines.length - LOG_LIMIT);
+            trimmed = true;
         }
         if (!els.logPanel.hidden) {
-            els.log.value += text + '\n';
-            els.log.scrollTop = els.log.scrollHeight;
+            // 표시 버퍼도 LOG_LIMIT 줄로 유지한다. 잘려 나간 뒤에는 전체를 다시 그린다.
+            if (trimmed) {
+                renderLog();
+            } else {
+                els.log.value += text + '\n';
+                els.log.scrollTop = els.log.scrollHeight;
+            }
         }
     }
 
@@ -120,6 +132,13 @@
         shell.errors.push({ message: message, detail: text });
         log('[SHELL] error: ' + message + (text ? ' :: ' + text : ''));
         if (shell.state === 'error') return;
+        // 직전에 리소스 내려받기 실패가 있었다면 abort의 원인일 가능성이 높으므로 상세에 함께 보여준다.
+        if (shell.downloadErrors.length) {
+            var last = shell.downloadErrors[shell.downloadErrors.length - 1];
+            message += ' 리소스 내려받기 실패가 원인일 수 있습니다.';
+            text = '마지막 리소스 오류: ' + last + (shell.downloadErrors.length > 1 ? ' (총 ' + shell.downloadErrors.length + '건)' : '')
+                + (text ? '\n' + text : '');
+        }
         els.errorMessage.textContent = message;
         els.errorDetail.textContent = text;
         if (shell.hadFirstFrame) {
@@ -169,12 +188,47 @@
         return text;
     }
 
+    // 런타임이 포기한 리소스 내려받기 오류를 보존하고 경고로 표시한다. 치명 여부는 런타임이 정한다
+    // (필수 리소스면 abort가 뒤따르고, 선택 리소스면 게임이 계속된다).
+    function noteDownloadError(text) {
+        // 같은 리소스에 대한 로그 문구와 setStatus 문구가 연달아 오면 한 건으로 합친다(최신 문구 유지).
+        var id = (text.match(/data\/[0-9a-f]{8,}/i) || [null])[0];
+        var n0 = shell.downloadErrors.length;
+        if (id && n0 && shell.downloadErrors[n0 - 1].indexOf(id) !== -1) {
+            shell.downloadErrors[n0 - 1] = text;
+        } else {
+            shell.downloadErrors.push(text);
+        }
+        var n = shell.downloadErrors.length;
+        var label = '리소스 내려받기 실패' + (n > 1 ? '(' + n + '건)' : '') + ': ' + text;
+        els.loadWarning.textContent = label;
+        els.hudWarning.textContent = label;
+        els.hudWarning.hidden = false;
+        log('[SHELL] download error: ' + text);
+    }
+
+    // Taisei 로그(print/printErr)에서 내려받기 실패를 찾아둔다. 수정 전 빌드(무한 재시도)는 setStatus를 보내지 않고
+    // log_error만 남기므로 첫 실패 문구를 잡아 경고로 보여준다. 이미 기록된 뒤에는 반복 문구를 무시한다.
+    function inspectGameLog(text) {
+        var m = text.match(/(Failed to download .*|Giving up on .*)$/i);
+        if (!m) return;
+        // 수정 전 빌드는 같은 문구를 무한히 반복하므로 첫 실패만 기록한다. 다른 리소스의 실패는 새로 기록한다.
+        var id = (m[1].match(/data\/[0-9a-f]{8,}/i) || [null])[0];
+        var dup = shell.downloadErrors.some(function (e) { return id && e.indexOf(id) !== -1; });
+        if (!dup) noteDownloadError(m[1]);
+    }
+
     // Emscripten/Taisei가 호출하는 Module.setStatus. 업스트림 셸과 같은 형식("텍스트 (현재/전체)")을 해석한다.
     var moduleSetStatus = (function () {
         var last = { time: 0, text: null };
         return function (text, force) {
             text = text == null ? '' : String(text);
             if (!text && !force) return;
+            // fork PR #1 계약: 내려받기를 포기하면 "Error: Failed to download <url> (HTTP status N)"을 force로 보낸다.
+            if (/^Error:/i.test(text)) {
+                noteDownloadError(text.replace(/^Error:\s*/i, ''));
+                return;
+            }
             if (text === last.text) return;
             var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
             var now = Date.now();
@@ -251,16 +305,13 @@
                 var text = joinArgs(arguments);
                 console.log(text);
                 log(text);
+                inspectGameLog(text);
             },
             printErr: function () {
                 var text = joinArgs(arguments);
                 console.error(text);
                 log('[ERR] ' + text);
-                // 리소스 내려받기 실패는 게임이 계속 재시도하므로 화면에 알린다(원인 해결은 서버/산출물 쪽).
-                if (/Failed to download/i.test(text)) {
-                    els.hudStatus.textContent = '리소스 내려받기 실패(재시도 중) - 로그 확인';
-                    els.loadWarning.textContent = '리소스 내려받기 실패(게임이 재시도합니다): ' + text;
-                }
+                inspectGameLog(text);
             },
             onAbort: function (what) {
                 fail('게임 모듈이 비정상 종료되었습니다(abort).', what);
