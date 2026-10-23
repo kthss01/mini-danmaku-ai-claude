@@ -164,11 +164,53 @@ python -m http.server 8137 --bind 127.0.0.1 --directory $env:TEMP\taisei-shell-r
 - `E: rwops_zstd ... SDL_ReadIO() returned 0, expected 9` ×2 (런타임, #5)
 - `warning: 2 FS.syncfs operations in flight at once` (IDBFS 동기화 중복, #5)
 
+### C. 공식 산출물 + 세션 4 서버 통합 검증
+
+A·B는 셸을 직접 배치한 사이트로 검증했다. C는 세션 1의 공식 빌드(`build/web/site`)를 그대로 쓰고 세션 4 서버(`scripts/serve-web.py`)로 제공해 확인했다.
+
+산출물 출처(`build/web/site/build-info.json`):
+
+| 항목 | 값 |
+| --- | --- |
+| Taisei 커밋 | `f59212b72df3b68459b4677a6200e42be700078a` (fork PR #1 머지 커밋 포함 → HTTP 404 같은 영구 오류는 재시도 없이 실패. 0/408/429/5xx는 최대 3회 제한 재시도, 응답이 멈춘 요청은 timeout이 없어 계속 기다림) |
+| 빌드한 메인 커밋 | `797f88000b67b88c9f583bbff3e64648fc13d9e7` (PR #15 대상, 미커밋 변경 없음) |
+| 빌드 시각(UTC) | 2026-10-23 12:31:22 ~ 12:35:37 |
+| `site.entry` | `game/index.html` |
+| `game/taisei.wasm` | 4,539,198 B, SHA-256 `76f6b39da5aa417fd41c7cbfb59da4216df0e7a3f1f02feb3c8be97fd1826192` |
+| `data/` | 529개, 217,186,447 B |
+| 셸 파일 | `index.html`, `game/index.html`, `game/shell.js`가 main(`03f580b`)의 `web/`와 동일 |
+
+세션 1 clone의 `build/web/site`를 이 clone의 Git 제외 경로 두 곳에 복사했다. 하나는 그대로 두고, 다른 하나는 `game/data/6e3e30da…`(폰트) 1개를 지웠다.
+
+```powershell
+python scripts/serve-web.py --root build/web-official --port 8141 --quiet
+python scripts/serve-web.py --root build/web-official-missing --port 8142 --quiet
+```
+
+서버 응답(두 포트 공통): `/`, `/game/index.html` → 200 `text/html`. `/game/taisei.wasm` → 200 `application/wasm`. `/game/shell.js` → 200 `text/javascript`. 모두 `Cache-Control: no-store`. 지운 폰트는 8142에서만 404였다.
+
+2026-10-23, Claude 데스크톱 앱 내장 브라우저(Chromium, 1024×768, DPR 1.75), 새 포트라 빈 IndexedDB에서 확인:
+
+| 항목 | 결과 |
+| --- | --- |
+| `/` → `game/index.html` 리다이렉트, `ready`, HUD 숨김 | 통과 |
+| 시작 → 프리페치 진행률(/1016) → 첫 프레임 → `playing` | 통과 |
+| 왼쪽 Ctrl 유지로 인트로 컷신 건너뛰기 → 메인 메뉴 | 통과 |
+| Z로 Start Story → 난이도 → 캐릭터 → 샷 → Stage 1 진입, ←·Z 반영, Esc 일시정지 메뉴 | 통과 |
+| canvas 포커스 유지, `scrollY` 0, 셸 오류·내려받기 오류 0건 | 통과 |
+| 오디오 | SDL이 만든 `AudioContext`가 `running`. 실제 소리 청취는 미확인 |
+| 새로고침 후 재시작 | `Loaded persistent storage from IndexedDB`, `data/` 재다운로드 0건, 8초 안에 `playing` |
+| 폰트 누락(8142) | 해당 URL 요청 1회(404) → `Required font 'standard_cjk'` → abort. 셸은 `error`, 상세 첫 줄에 `Failed to download data/6e3e30da… (HTTP status 404)` 표시. 같은 리소스의 로그 문구와 `setStatus` 문구는 1건으로 합쳐짐 |
+
+게임 로그의 런타임 오류는 B와 같다(`viewport.pp` 없음, `rwops_zstd` seektable ×2, `FS.syncfs` 중복 경고). 세션 2가 `docs/web/RUNTIME.md`에서 분류했다.
+
+**수정 전후 구분(필수 리소스 HTTP 404 시나리오에 한정):** B의 원본 빌드(fork `5668c41b`)는 리소스가 없으면 무한 재시도하므로 셸은 경고만 띄우고 로딩이 멈춘다. C의 공식 빌드(fork `f59212b7`)는 404 응답에 대해 1회 요청 후 실패로 끝나고 셸이 원인을 오류 패널에 보여준다. 503 등 일시적 오류는 제한 재시도 경로이고, 응답이 멈춘 요청은 timeout이 없어 기다리므로 이 결과를 일반화하지 않는다(둘 다 이 검증에서 재현하지 않음).
+
 ### 검증하지 않은 것
 
 - Chrome/Edge 실제 브라우저 창에서의 전체 화면, 실제 창 전환 시 키 해제, 5분 이상 플레이·FPS·사운드 청취(세션 5 QA 범위)
-- 세션 1 `scripts/build-web.ps1`(PR #11)이 실제로 만든 `build/web/site`와의 결합. 위 검증은 같은 배치를 `stage-site.ps1`로 재현해 수행했다
-- 세션 4 서버(`scripts/serve-web.*`)와의 결합. 위 검증은 `python -m http.server`를 썼다(`.wasm`은 `application/wasm`으로 제공됨을 확인)
+- 실제 빌드에서 선택 리소스 실패 후 계속 플레이(mock `asset-optional`로만 확인)
+- PR #15 머지 후 main의 깨끗한 checkout에서 다시 만든 산출물. C는 PR #15 대상 커밋 `797f880`으로 세션 1이 만든 산출물을 썼다
 
 ## 범위 제외
 
