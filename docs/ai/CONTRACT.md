@@ -291,6 +291,7 @@ submit(episode_id, target_frame, hold, edges) → status
   1. 슬롯의 `target_frame == F+1`이면 적용하고 슬롯을 비운다 (`act_applied`++, `act_last_obs_frame = F`).
   2. 슬롯이 비었으면 직전 `hold`를 유지하고 엣지는 반복하지 않으며 `act_missing`++.
   3. 슬롯의 `target_frame < F+1`이면 `act_stale`++로 버리고 2와 같이 처리한다.
+- **사망 처리 틱 예외:** 원본 `player_realdeath()`가 그 틱에 이동 비트(`INFLAGS_MOVE`)를 지운다(`inputflags &= ~INFLAGS_MOVE`). 그래서 `p_phase`가 `hit_pending → dead`로 넘어가는 프레임의 `p_inputflags`는 낸 `hold`와 이동 비트가 다를 수 있다. 원본 규칙이고 브리지는 건드리지 않는다. 입력 지연 검증은 이 프레임을 제외한다.
 - 입력 해제 보장: `ai_active`를 벗어나는 모든 전환은 슬롯과 대기 엣지를 즉시 버린다. 이미 설정된 `inputflags`는 다음 `process_input`의 `player_fix_input`이 물리 키 상태로 되돌린다(최대 1프레임, 물리 키가 눌려 있지 않으면 전부 해제).
 - 새 에피소드로 넘어가면 `hold = 0`, 슬롯 비움. `episode_id`가 다른 액션은 거부한다.
 

@@ -118,6 +118,8 @@ CONTRACT 7절의 표가 기준이다. 요약: 시작(`start`), 프레임 스텝,
 
 ## 8. 검증 기록
 
+검증한 fork 머리: 대부분 `a5db15ff`(master `1d4b468d` 위). 이후 fork master의 #3(자동 발사 기본)·#4(한국어)를 병합한 `f5511353`으로 다시 빌드해 스테이지 진입, 입력 1프레임 적용, 시드 주입, 메뉴 재시작을 다시 확인했다. 병합 변경은 `src/config.h`와 `po/ko.po`뿐이고 브리지 코드와 겹치지 않는다. 일시정지·사용자 키·리플레이 재생은 `a5db15ff` 빌드에서만 확인했다.
+
 "fixture"는 가짜 Module로 어댑터 로직만 본 것이고, "실제 게임"은 이 문서의 fork 브랜치로 만든 웹 빌드를 내장 브라우저에서 돌린 것이다. 키 입력은 **DOM 키 이벤트**로 보냈다(실제 키보드 입력이 아니다). 증거 상세는 [tests/ai-bridge/evidence/2026-10-30-real-game.md](../../tests/ai-bridge/evidence/2026-10-30-real-game.md).
 
 | 구분 | 항목 | 결과 |
@@ -125,7 +127,7 @@ CONTRACT 7절의 표가 기준이다. 요약: 시작(`start`), 프레임 스텝,
 | fixture | 어댑터 단위 테스트 17건 (`node --test tests/ai-bridge/bridge.test.mjs`) | 통과 |
 | 실제 게임 | 실제 WASM의 레이아웃이 계약 필드를 모두 갖췄는가(`createBridge`의 `validateLayout`) | **통과** |
 | 실제 게임 | 관측과 화면 일치 | **일치**(Stage 1 Normal). 관측 좌표로 겹쳐 그린 오버레이가 탄·적 스프라이트와 맞고, HUD의 잔기·그레이즈·파워가 관측과 같다. 증거 이미지는 evidence 폴더. 레이저 구간은 Stage 1에 레이저가 없어 **미검증** |
-| 실제 게임 | 입력이 1프레임 뒤에 적용 | **통과**. 틱 F에서 낸 hold가 틱 F+1의 `inputflags`와 180쌍 모두 일치, `missing` 0 |
+| 실제 게임 | 입력이 1프레임 뒤에 적용 | **통과**. 틱 F에서 낸 hold가 틱 F+1의 `inputflags`와 180쌍 모두 일치(`a5db15ff`), 병합 빌드(`f5511353`)에서 300쌍 중 299쌍 일치. 나머지 1쌍은 사망 처리 틱(`hit_pending → dead`)에서 원본 `player_realdeath`가 이동 비트를 지우는 규칙 때문이다(CONTRACT 6.2절). `missing` 0 |
 | 실제 게임 | 이동·경계 | 틱당 −5.625으로 이동, x=16에서 멈춤(`PLR_MIN_BORDER_DIST`) |
 | 실제 게임 | 재시작 후 상태 초기화 | **통과**. `request_restart` → `episode_id` +1, `ai_suspended(restart)`, `act_*`·`p_ev_*` 0, `inputflags` 0, 탄 0. 메뉴의 "Restart the Game"도 `episode_id` +1, 시드 갱신(이때 사유는 `game_over` 그대로: 원본이 `stage_finish` 없이 `GAMEOVER_RESTART`를 직접 설정한다) |
 | 실제 게임 | AI 해제 시 입력 해제 | **통과**. `disable` 뒤 `inputflags` 0, 일시정지 후 `ai_suspended`에서 재개 시 `inputflags` 0 |
