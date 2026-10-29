@@ -84,7 +84,7 @@ checking ─(미지원)→ unsupported
 
 ## 조작 안내 근거
 
-`src/config.h`의 기본 키 바인딩: 이동 방향키, 공격 `Z`, 봄 `X`, 특수 `C`, 저속 `LShift`, 건너뛰기 `LCtrl`, 일시정지 `Pause`/`Esc`(`events.c`), 소리 토글 `M`, 전체 화면 `F11`(웹에서는 브라우저가 처리). 게임 내 Options에서 바꿀 수 있다.
+`src/config.h`의 기본 키 바인딩: 이동 방향키, 공격 `Z`, 봄 `X`, 특수 `C`, 저속 `LShift`, 건너뛰기 `LCtrl`, 일시정지 `Pause`/`Esc`(`events.c`), 소리 토글 `M`, 전체 화면 `F11`(웹에서는 브라우저가 처리). 게임 내 Options에서 바꿀 수 있다. 웹 빌드는 `CONFIG_SHOT_INVERTED` 기본값이 1이어서 자동 발사가 기본이고, `Z`를 누르는 동안 발사가 멈춘다(fork PR kthss01/taisei#3).
 
 ## 검증
 
