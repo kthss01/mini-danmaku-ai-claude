@@ -149,8 +149,9 @@ test('hold/edges 인코딩', () => {
 });
 
 test('사유 코드는 이름과 정수가 일대일이다', () => {
-	assert.equal(REASONS.length, 14);
-	assert.equal(new Set(REASONS).size, 14);
+	assert.equal(REASONS.length, 15);
+	assert.equal(new Set(REASONS).size, 15);
+	assert.equal(REASONS[14], 'action_timeout');
 	for (let i = 0; i < REASONS.length; i++) {
 		assert.equal(reasonCode(REASONS[i]), i);
 		assert.equal(reasonName(i), REASONS[i]);
@@ -258,6 +259,30 @@ test('시드 설정: bigint를 상·하위 32비트로 나눈다', () => {
 	assert.deepEqual(M.__state.seed, { lo: 1, hi: 2, sticky: false });
 	b.clearSeed();
 	assert.equal(M.__state.seed, null);
+});
+
+test('누락 허용 한도와 캡처 상한 설정이 C 함수 인자로 전달된다', () => {
+	const M = createMockModule();
+	const b = createBridge(M);
+	b.setMissingLimit(10);
+	assert.equal(M.__state.missingLimit, 10);
+	b.setMissingLimit(-1);
+	assert.equal(M.__state.missingLimit, -1, '음수는 C 쪽이 기본값으로 되돌린다');
+	b.setLimits({ bullets: 5, segs: 3 });
+	assert.deepEqual(M.__state.limits, [5, 0, 3, 0]);
+	b.setLimits();
+	assert.deepEqual(M.__state.limits, [0, 0, 0, 0]);
+});
+
+test('action_timeout 전환 이벤트는 이름으로 전달된다', () => {
+	const M = createMockModule();
+	const b = createBridge(M);
+	const events = [];
+	b.onEvent((k, s, r) => events.push([s, r]));
+	b.enable();
+	b.suspend('action_timeout');
+	assert.deepEqual(events.at(-1), ['ai_suspended', 'action_timeout']);
+	assert.equal(b.state().owner_reason_name, 'action_timeout');
 });
 
 test('상태 블록은 관측이 없어도 읽는다', () => {

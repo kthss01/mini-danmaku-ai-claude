@@ -146,6 +146,12 @@ export function createMockModule(options = {}) {
 	M._taisei_ai_clear_seed = () => {
 		state.seed = null;
 	};
+	M._taisei_ai_set_missing_limit = (n) => {
+		state.missingLimit = n;
+	};
+	M._taisei_ai_set_limits = (b, l, s, e) => {
+		state.limits = [b, l, s, e];
+	};
 	M._taisei_ai_submit = (ep, target, hold, edges) => {
 		state.calls.push({ ep, target, hold, edges });
 		if (state.owner !== 1) return 4;

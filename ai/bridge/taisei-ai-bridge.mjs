@@ -22,7 +22,7 @@ export const OWNER_STATE = Object.freeze(['manual', 'ai_active', 'ai_suspended']
 export const REASONS = Object.freeze([
 	'none', 'pause', 'focus_lost', 'dialog', 'stage_end', 'restart', 'host_request',
 	'user_input', 'policy_error', 'policy_deadline', 'observation_invalid', 'bridge_error',
-	'game_over', 'not_playing',
+	'game_over', 'not_playing', 'action_timeout',
 ]);
 
 // submit 반환 코드 (CONTRACT.md 6.2절)
@@ -45,7 +45,7 @@ export const FIELDS = Object.freeze({
 		'seed_source', 'cheat_flags', 'cheat_events', 'overflow', 'n_bullets', 'n_lasers', 'n_segs',
 		'n_enemies', 'total_bullets', 'total_lasers', 'total_segs', 'total_enemies', 'owner_state',
 		'owner_reason', 'owner_events', 'act_applied', 'act_stale', 'act_dup', 'act_missing',
-		'act_rejected', 'act_last_obs_frame', 'hold_applied',
+		'act_rejected', 'act_last_obs_frame', 'hold_applied', 'act_missing_run', 'act_missing_limit',
 		'p_alive', 'p_vulnerable', 'p_phase', 'p_inputflags', 'p_focus', 'p_lives', 'p_bombs',
 		'p_power', 'p_power_stored', 'p_graze', 'p_deathtime', 'p_respawntime', 'p_recoverytime',
 		'p_bomb_endtime', 'p_bomb_active', 'p_powersurge', 'p_ev_hit', 'p_ev_death',
@@ -424,6 +424,18 @@ export class TaiseiAIBridge {
 
 	clearSeed() {
 		this._call('clear_seed');
+	}
+
+	// 연속으로 액션이 없어도 `ai_active`가 버티는 틱 수. 넘으면 `ai_suspended(action_timeout)`.
+	// 0이면 허용 없음, 음수면 기본값(30).
+	setMissingLimit(limit) {
+		this._call('set_missing_limit', limit | 0);
+	}
+
+	// 캡처가 담을 수 있는 개수의 상한을 낮춘다(정적 최대 이하, 0 이하면 최대로 복원).
+	// overflow 경로를 작은 숫자로 시험할 때 쓴다.
+	setLimits({ bullets = 0, lasers = 0, segs = 0, enemies = 0 } = {}) {
+		this._call('set_limits', bullets | 0, lasers | 0, segs | 0, enemies | 0);
 	}
 
 	// 액션을 제출한다. episode_id/target_frame을 생략하면 마지막 관측 기준(+1)으로 채운다.

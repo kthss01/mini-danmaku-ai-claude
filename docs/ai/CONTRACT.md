@@ -43,7 +43,7 @@
 
 - **캡처 지점은 `stage_comain` 본문 끝이 아니라 `cosched_run_tasks` 직후다.** `stage_comain`은 가장 먼저 만들어진 태스크라서 같은 틱에서 가장 먼저 돈다. 그 뒤에 도는 패턴·적 태스크가 탄을 새로 만들거나 `pos`·`move`를 바꾼다. `stage_comain` 끝에서 캡처하면 이 변경이 빠져서 다음 틱 충돌 시점의 상태와 어긋난다. 원본 소스의 `cosched_run_tasks`(`coroutine/cosched.c`)가 태스크를 생성 순서대로 실행함을 근거로 했다. (이슈 요청 문구 "stage_comain 끝, frames++ 전"과 다른 점이며, 틱 끝 상태라는 의도는 같다.)
 - 따라서 `obs`는 **틱 F+1에서 플레이어가 움직이고 탄이 이동·충돌하기 직전의 상태**다. 액션은 이 관측에서 정한다.
-- **입력 지연은 항상 1프레임**이다(관측 틱 F → 적용 틱 F+1). 동기 콜백 모드에서는 같은 틱 안에 액션을 등록하므로 `missing`이 생기지 않는다.
+- **정상 경로의 입력 지연은 1프레임**이다. 관측 틱 F에서 받은 액션이 슬롯에 들어가 틱 F+1에 적용되는 경우(`accepted`)에 한한다(동기 콜백 모드에서는 같은 틱 안에 등록하므로 이 경로뿐이다). 비동기 경로에서 호스트가 늦게 제출하면 `stale`/`dup`/`missing`으로 기록되고 지연은 1프레임이 아니다.
 - **레이저 구간만 한 틱 늦다.** `laser_segs[]`는 틱 F의 `process_lasers`가 만든 충돌 구간이다. 틱 F의 레이저 태스크가 그 뒤에 모양을 바꾸면(이동·충전) 틱 F+1의 실제 충돌 구간은 그 변경분만큼 다르다. 레이저는 `lasers[]`의 `width`·`active`와 함께 한 프레임 오차 여유를 둔다.
 - 첫 관측: `_stage_enter` 뒤 첫 `cosched_run_tasks`는 `stage_comain`의 `begin`만 실행하고 `process_input`을 돌리지 않는다. 그래서 첫 관측은 `frame = 0`이고 그 액션은 `frame = 1`에 처음 적용된다. 그 전 틱은 입력이 없다(hold 0).
 - 관측은 **논리 프레임마다** 낸다. 브라우저 콜백 1회에 논리 프레임이 여러 개 도는 경우(리플레이 스킵)에도 프레임마다다. 일시정지·메뉴 중에는 프레임이 진행하지 않으므로 관측도 없다(상태는 `status`로 읽는다, 6.3절).
@@ -85,7 +85,9 @@
 | `act_applied` | i32 | 에피소드 시작부터 적용된 액션 수 |
 | `act_stale` | i32 | 이미 지난 `target_frame`이어서 버린 액션 수 |
 | `act_dup` | i32 | 같은 `target_frame`의 두 번째 이후라서 버린 액션 수 |
-| `act_missing` | i32 | `ai_active`인데 그 프레임에 액션이 없어서 직전 hold를 유지한 횟수 |
+| `act_missing` | i32 | `ai_active`인데 그 프레임에 액션이 없어서 직전 hold를 유지한 횟수(에피소드 누적) |
+| `act_missing_run` | i32 | 지금 연속으로 액션이 없는 틱 수. 액션이 적용되면 0으로 돌아간다 |
+| `act_missing_limit` | i32 | `act_missing_run`이 이 값을 **넘으면** `ai_suspended(action_timeout)`가 된다(기본 30, `set_missing_limit`) |
 | `act_rejected` | i32 | 에피소드 불일치·비활성 등 그 밖의 사유로 거부한 액션 수 |
 | `act_last_obs_frame` | i32 | 마지막으로 적용된 액션의 근거 관측 프레임(= `target_frame − 1`). 적용 틱 − 이 값 = 입력 적용 지연 |
 | `hold_applied` | i32 | 이 틱에 실제로 적용된 hold 비트(`inputflags`와 같은 값) |
@@ -159,7 +161,7 @@
 | `id` | u32 | `spawn_id` |
 | `active` | u32 | `laser_is_active`(`collision_active`). 0이면 충돌하지 않는다 |
 | `birth` | i32 | `birthtime` |
-| `timespan`, `deathtime`, `speed`, `width` | f32 | 원본 필드 그대로. `width`는 목표 폭 |
+| `timespan`, `deathtime`, `speed`, `width` | f32 | 원본 필드 그대로. **`width`는 캡처 시점(틱 F의 모든 태스크가 끝난 뒤)의 현재 폭이다.** 목표 폭이 아니다 — 원본 `laser_charge`가 매 틱 `l->width = new_width`로 갱신한다 |
 | `seg_start`, `seg_count` | u32 | `laser_segs[]`의 범위 |
 
 **`laser_segs[]`** — 틱 F의 `process_lasers`가 만든 구간(1절의 한 틱 오차 참조)
@@ -178,6 +180,8 @@
 | `hurt_radius` | f32 | `enemy_get_hurt_radius`(0이면 접촉 무해) |
 | `hp` | f32 | 체력 |
 | `flags` | u32 | 원본 `EnemyFlag` 비트 그대로 |
+
+**레이저 시간 차이:** `lasers[].width`·`active`는 틱 F의 모든 태스크가 끝난 시점의 값이고(충전 함수가 이미 이번 틱 폭을 갱신한 뒤), `laser_segs[]`는 그 틱 앞부분의 `process_lasers`가 만든 구간이다. 충전 중인 레이저는 두 값이 한 틱 어긋날 수 있다. **충전 목표 폭과 활성까지 남은 프레임은 제공하지 않는다**(원본에 필드가 없다. 정책이 `width`의 변화로 추정한다).
 
 **미제공 (v1):** 아이템, 아군 탄, 그레이즈 판정 형상, 대화 내용, 화면 효과, 레이저의 "활성까지 남은 프레임"(원본에 필드가 없다. `birth`·`width`로 추정한다), 보스 이외의 체력 바 정보.
 
@@ -243,8 +247,9 @@
 | 11 | `bridge_error` | 브리지 | → `manual` | `error` / `runner_error` |
 | 12 | `game_over` | 브리지 | → `ai_suspended` | `completed` / `game_over` (컨티뉴 화면. 컨티뉴를 쓰면 클리어로 인정하지 않는다) |
 | 13 | `not_playing` | 브리지 | `enable`/`resume`이 진행 중인 스테이지가 아니라서 `ai_suspended` | 영향 없음 |
+| 14 | `action_timeout` | 브리지 | → `ai_suspended` (연속 누락이 한도를 넘음, 6.2절) | `error` / `policy_error` (호스트·정책이 응답하지 않음) |
 
-세션 4가 제안한 후보 11개를 그대로 받고 `game_over`·`not_playing`을 더했다(#23 Q6 답변에 대한 확정). 문자열은 `layout.enums.owner_reason`에도 들어 있다.
+세션 4가 제안한 후보 11개를 그대로 받고 `game_over`·`not_playing`·`action_timeout`을 더했다(#23 Q6 답변에 대한 확정). 문자열은 `layout.enums.owner_reason`에도 들어 있다.
 
 **`dialog`를 자동 정지에 쓰지 않는 이유.** 대화 중에도 플레이어는 움직이고 탄도 있다. 정지하면 AI가 서 있는 동안 피격되거나 대화를 넘기지 못해 오히려 해롭다. 대화를 넘기는 입력은 `hold.skip`(원본 `INFLAG_SKIP`, 대화 페이지 넘김)으로 한다. 호스트가 대화 구간을 따로 다루고 싶으면 `meta.dialog_active`를 보고 직접 `suspend('dialog')`한다.
 
@@ -289,7 +294,7 @@ submit(episode_id, target_frame, hold, edges) → status
 - `stale`·`dup`은 카운터를 올리고 버린다. 나머지 거부는 `act_rejected`를 올린다.
 - 틱 F+1의 `process_input`에서:
   1. 슬롯의 `target_frame == F+1`이면 적용하고 슬롯을 비운다 (`act_applied`++, `act_last_obs_frame = F`).
-  2. 슬롯이 비었으면 직전 `hold`를 유지하고 엣지는 반복하지 않으며 `act_missing`++.
+  2. 슬롯이 비었으면 직전 `hold`를 유지하고 엣지는 반복하지 않으며 `act_missing`++, `act_missing_run`++. **`act_missing_run`이 `act_missing_limit`을 넘으면** 즉시 `ai_suspended`(사유 `action_timeout`)로 바꾸고 슬롯·hold·엣지를 버린다. 그 틱의 입력은 물리 키에서 만든다(AI 입력이 무기한 남지 않는다). 이 만료는 **첫 관측 이전에는 일어나지 않는다**(관측이 한 번 나온 뒤부터 센다). 정상 적용 한 번이면 `act_missing_run`이 0으로 돌아간다. 한도는 `set_missing_limit(n)`으로 바꾼다(0이면 허용 없음, 음수면 기본 30).
   3. 슬롯의 `target_frame < F+1`이면 `act_stale`++로 버리고 2와 같이 처리한다.
 - **사망 처리 틱 예외:** 원본 `player_realdeath()`가 그 틱에 이동 비트(`INFLAGS_MOVE`)를 지운다(`inputflags &= ~INFLAGS_MOVE`). 그래서 `p_phase`가 `hit_pending → dead`로 넘어가는 프레임의 `p_inputflags`는 낸 `hold`와 이동 비트가 다를 수 있다. 원본 규칙이고 브리지는 건드리지 않는다. 입력 지연 검증은 이 프레임을 제외한다.
 - 입력 해제 보장: `ai_active`를 벗어나는 모든 전환은 슬롯과 대기 엣지를 즉시 버린다. 이미 설정된 `inputflags`는 다음 `process_input`의 `player_fix_input`이 물리 키 상태로 되돌린다(최대 1프레임, 물리 키가 눌려 있지 않으면 전부 해제).
@@ -381,7 +386,8 @@ bridge.setSeed(seed, { sticky }); bridge.clearSeed(); bridge.requestRestart();
 | 항목 | v0.2 | v1 |
 | --- | --- | --- |
 | 관측 캡처 지점 | `stage_comain` 본문 끝 | `cosched_run_tasks` 직후, `global.frames++` 직전 (1절) |
-| `owner_state` 전환 사유 | 이벤트 이름만 | 코드 14종 (4.2절). `dialog`는 호스트 전용 |
+| `owner_state` 전환 사유 | 이벤트 이름만 | 코드 15종 (4.2절). `dialog`는 호스트 전용 |
+| 누락 입력 | 직전 hold 유지(무기한) | 연속 누락 한도 초과 시 `ai_suspended(action_timeout)` (6.2절) |
 | `ai_suspended`의 입력 | 입력 해제(`hold = 0`) | 물리 키 그대로. AI가 입력을 쥐지 않는다는 뜻. 사람의 일시정지·점수 화면 조작이 막히지 않는다 |
 | 사용자 키 | 미정 | `ai_active` 중이면 `manual`로 전환(4.3절) |
 | 시작(`start`) | 계획 | 미지원 (7절) |
