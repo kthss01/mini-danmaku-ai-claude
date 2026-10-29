@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "taisei-ai-episode/1",
+  "title": "에피소드 원시 기록 (실행기·호스트가 쓴다: episodes/NNNN.json)",
+  "description": "run·code·config와 실행기가 관측한 원시 사실만 담는다. result·events·metrics·quality는 평가 도구가 evaluation.json에 따로 쓰며 이 파일을 고치지 않는다.",
+  "type": "object",
+  "required": ["schema", "run_id", "experiment_id", "episode_index", "code", "config", "run"],
+  "properties": {
+    "schema": {"const": "taisei-ai-episode/1"},
+    "run_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$"},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "episode_index": {"type": "integer", "minimum": 1},
+    "episode_id": {"type": ["integer", "null"], "description": "브리지 obs.meta.episode_id"},
+    "started_at": {"type": ["string", "null"]},
+    "ended_at": {"type": ["string", "null"]},
+    "code": {"$ref": "#/$defs/code"},
+    "config": {"$ref": "#/$defs/config"},
+    "run": {
+      "type": "object",
+      "description": "실행기가 판정한 상태와 원시 사실. status는 completed|timeout|aborted|error 중 하나만 쓴다(invalid·unsupported는 평가 도구가 판정).",
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["completed", "timeout", "aborted", "error"]},
+        "reason": {"type": ["string", "null"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "elapsed_s": {"type": ["number", "null"], "minimum": 0},
+        "error_message": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "owner_transitions": {
+      "type": "array",
+      "description": "브리지 onEvent로 받은 소유권 전환. 일시정지 구간은 관측 프레임이 없으므로 여기서 읽는다.",
+      "items": {
+        "type": "object",
+        "required": ["state", "reason"],
+        "properties": {
+          "frame": {"type": ["integer", "null"]},
+          "wall_ms": {"type": ["number", "null"]},
+          "state": {"enum": ["manual", "ai_active", "ai_suspended"]},
+          "reason": {"$ref": "#/$defs/owner_reason"}
+        }
+      }
+    },
+    "final": {
+      "type": ["object", "null"],
+      "description": "에피소드 끝에 읽은 브리지 status 블록.",
+      "properties": {
+        "gameover": {"$ref": "#/$defs/gameover"},
+        "last_frame": {"type": ["integer", "null"]}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "trace": {"type": ["string", "null"], "description": "run 폴더 기준 상대 경로. 기본 episodes/NNNN.trace.jsonl"},
+        "replay": {"type": ["string", "null"]},
+        "log": {"type": ["string", "null"]}
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "owner_reason": {
+      "enum": ["none", "pause", "focus_lost", "dialog", "stage_end", "restart", "host_request", "user_input", "policy_error", "policy_deadline", "observation_invalid", "bridge_error", "game_over", "not_playing"]
+    },
+    "gameover": {
+      "enum": ["NONE", "WIN", "DEFEAT", "ABORT", "RESTART", "SCORESCREEN", "TRANSITIONING"]
+    },
+    "code": {
+      "type": "object",
+      "properties": {
+        "main_commit": {"type": ["string", "null"]},
+        "taisei_commit": {"type": ["string", "null"]},
+        "dirty": {"type": ["boolean", "null"]},
+        "build_flavor": {"enum": ["release", "developer", null]},
+        "rules_preserved": {"enum": ["original", "unverified", null]},
+        "build_info_sha256": {"type": ["string", "null"]},
+        "wasm_sha256": {"type": ["string", "null"]}
+      }
+    },
+    "config": {
+      "type": "object",
+      "required": ["scenario", "policy", "seed", "limits"],
+      "properties": {
+        "scenario": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {"enum": ["spell", "stage"]},
+            "id": {"type": ["string", "integer", "null"]},
+            "difficulty": {"type": ["string", "null"]},
+            "character": {"type": ["string", "null"]},
+            "shot": {"type": ["string", "null"]}
+          }
+        },
+        "policy": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "version": {"type": ["string", "null"]},
+            "params_sha256": {"type": ["string", "null"]}
+          }
+        },
+        "seed": {
+          "type": "object",
+          "required": ["control"],
+          "properties": {
+            "control": {"enum": ["random", "set", "replay", "unsupported"], "description": "random=시드를 지정하지 않음(makeseed), set=set_seed 주입, replay=리플레이, unsupported=지정을 요구했으나 쓸 수 없음"},
+            "required": {"type": "boolean", "description": "true인데 실제 출처가 요청과 다르면 평가는 unsupported로 판정한다"},
+            "requested": {"type": ["integer", "string", "null"]},
+            "actual": {"type": ["string", "null"], "description": "obs.meta.seed_hi:seed_lo를 16진수로 쓴 값"},
+            "source": {"enum": ["random", "set", "replay", null], "description": "obs.meta.seed_source 0/1/2"}
+          }
+        },
+        "limits": {
+          "type": "object",
+          "required": ["max_frames"],
+          "properties": {
+            "max_frames": {"type": "integer", "minimum": 1},
+            "wall_timeout_s": {"type": ["number", "null"], "minimum": 0}
+          }
+        },
+        "shot_inverted": {"enum": [0, 1, null], "description": "CONFIG_SHOT_INVERTED(Shoot by default). 1이면 Z를 누르지 않을 때 쏜다. 브리지 액션의 hold.SHOT에는 적용되지 않고 물리 키에만 적용된다"},
+        "shot_inverted_source": {"enum": ["web_default", "saved_setting", "forced", "unknown", null]},
+        "pre_hit_window_frames": {"type": "integer", "minimum": 1},
+        "observation": {"type": ["string", "null"], "description": "예: taisei.ai.obs/1"}
+      }
+    }
+  }
+}
