@@ -6,6 +6,8 @@
 #   EM_VERSION      emsdk/Emscripten 버전 (공식 CI의 EM_VERSION과 일치)
 #   TAISEI_COMMIT   빌드할 game/taisei 커밋 (40자리)
 #   INSTALL_PREFIX  meson install 대상 (컨테이너 경로)
+# 선택 환경 변수:
+#   MESON_EXTRA_OPTS  meson setup에 덧붙일 옵션(공백으로 구분). 개발자 빌드는 -Ddeveloper=true
 set -eu
 
 : "${EM_VERSION:?}"
@@ -41,6 +43,7 @@ meson setup build/web \
     --cross-file "$CONFIG_DIR/emscripten-toolchain.ini" \
     --cross-file misc/ci/emscripten-build.ini \
     --prefix="$INSTALL_PREFIX" \
-    -Dbuild.cpp_std=gnu++14
+    -Dbuild.cpp_std=gnu++14 \
+    ${MESON_EXTRA_OPTS:-}
 meson compile -C build/web
 meson install -C build/web

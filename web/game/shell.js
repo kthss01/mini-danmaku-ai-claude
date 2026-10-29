@@ -17,6 +17,15 @@
         factoryName: RAW.factoryName || 'createTaisei',
         requiredInstanceMethods: RAW.requiredInstanceMethods || ['initFilesystem', 'callMain'],
         licenseFile: RAW.licenseFile || 'COPYING.txt',
+        // AI 연결(이슈 #24). 파일 위치는 페이지 기준 상대 경로이며 패키징 규칙(세션 1)이 정하면 shell-config.js에서 바꾼다.
+        aiBridgeUrl: RAW.aiBridgeUrl || 'ai/bridge/taisei-ai-bridge.mjs',
+        aiPolicyBase: RAW.aiPolicyBase || 'ai/policies/',
+        // 정책 번들 진입 파일 이름(ai/policies/<id>/ 아래). 정적 검사(check-web-assets.py)는 '.js'로 끝나는 문자열 리터럴을
+        // 페이지 기준 파일 참조로 보므로, 정책마다 달라지는 이 파일은 이름을 이어 붙여 만든다.
+        aiPolicyEntry: RAW.aiPolicyEntry || ('index' + '.js'),
+        // 검증용 mock 어댑터 스크립트. 프로덕션에는 없으므로 기본은 비어 있고, 검증용 사이트가 shell-config.js에서 지정한다.
+        aiMockScript: typeof RAW.aiMockScript === 'string' ? RAW.aiMockScript : '',
+        buildInfoUrl: RAW.buildInfoUrl || '../build-info.json',
     };
 
     function $(id) { return document.getElementById(id); }
@@ -48,6 +57,19 @@
         logPanel: $('log-panel'),
         log: $('log'),
         licenseLink: $('license-link'),
+        aiPanel: $('ai-panel'),
+        aiBadge: $('ai-badge'),
+        aiAdapter: $('ai-adapter'),
+        aiStart: $('ai-start'),
+        aiSuspend: $('ai-suspend'),
+        aiResume: $('ai-resume'),
+        aiManual: $('ai-manual'),
+        aiDetailsToggle: $('ai-details-toggle'),
+        aiMessage: $('ai-message'),
+        aiWarnings: $('ai-warnings'),
+        aiDetails: $('ai-details'),
+        aiPolicy: $('ai-policy'),
+        aiDecision: $('ai-decision'),
     };
 
     // 검증·디버깅용 공개 상태. 자동화 검증(mock/실제)에서 window.taiseiShell로 읽는다.
@@ -107,6 +129,8 @@
             views[i].classList.toggle('visible', list.indexOf(name) !== -1);
         }
         els.hud.hidden = name !== 'playing';
+        if (name !== 'playing') els.aiPanel.hidden = true;
+        else if (aiState.panel) renderAI();
         if (name !== 'playing') {
             els.controlsPopover.hidden = true;
         }
@@ -139,6 +163,7 @@
             text = '마지막 리소스 오류: ' + last + (shell.downloadErrors.length > 1 ? ' (총 ' + shell.downloadErrors.length + '건)' : '')
                 + (text ? '\n' + text : '');
         }
+        releaseAI('bridge_error'); // 게임 모듈이 멈추면 AI 입력을 쥐고 있지 않게 먼저 해제한다
         els.errorMessage.textContent = message;
         els.errorDetail.textContent = text;
         if (shell.hadFirstFrame) {
@@ -148,6 +173,7 @@
     }
 
     function setExited(code) {
+        releaseAI('host_request');
         els.exitMessage.textContent = code === 0 || code === undefined
             ? '게임이 정상적으로 종료되었습니다.'
             : '게임이 종료 코드 ' + code + '로 끝났습니다.';
@@ -278,6 +304,227 @@
         return { reasons: reasons, gl: gl };
     }
 
+    // ---------- AI 모드 (이슈 #24) ----------
+    // 소유권의 진실은 브리지(ai/bridge, 세션 2)다. 셸은 window.taiseiAI(ai-host.js)를 통해 보여주고 전환만 요청한다.
+    // 브리지가 없는 빌드(현재 공개 사이트)에서는 ?ai= 로 요청하지 않는 한 패널이 나타나지 않으므로 수동 플레이는 달라지지 않는다.
+    //   ?ai=0|off       AI 연결을 시도하지 않는다
+    //   ?ai=1           브리지가 없어도 패널을 보여주고 사용 불가 사유를 알린다
+    //   ?ai=mock        검증용 mock 어댑터(실제 게임 입력이 아님, 패널에 표시)
+    //   ?policy=<id>    ai/policies/<id>/index.js 정책 번들을 불러온다
+    var aiHost = window.taiseiAI;
+    var aiState = { requested: null, panel: false, pollTimer: null, resultMessage: '', detailsOpen: false };
+    shell.ai = aiState;
+
+    function aiQuery(name) {
+        try { return new URLSearchParams(window.location.search).get(name); } catch (e) { return null; }
+    }
+
+    function releaseAI(reason) {
+        if (!aiHost || !aiHost.state().available) return;
+        try { aiHost.disable(reason); } catch (e) { log('[SHELL] AI release failed: ' + describeError(e)); }
+    }
+
+    // 창 포커스 상실·탭 숨김: ai_active만 정지시키고 돌아와도 자동 재개하지 않는다(CONTRACT 4절).
+    function suspendAIOnFocusLoss(why) {
+        if (!aiHost || shell.state !== 'playing') return;
+        var r = aiHost.notifyFocusLost();
+        if (r === 'ok') log('[SHELL] AI suspended (focus_lost, ' + why + ')');
+    }
+
+    function aiShowPanel(show) {
+        aiState.panel = show;
+        els.aiPanel.hidden = !show || shell.state !== 'playing';
+        if (show && !aiState.pollTimer) {
+            // 일시정지·메뉴 중에는 이벤트가 없으므로 상태 블록을 주기적으로 읽는다(작은 상태 블록이라 비용이 거의 없다).
+            aiState.pollTimer = setInterval(renderAI, 250);
+        }
+        renderAI();
+    }
+
+    var MODE_LABEL = { manual: '수동', ai_active: 'AI 동작 중', ai_suspended: 'AI 정지' };
+
+    function renderAI() {
+        if (!aiState.panel) return;
+        els.aiPanel.hidden = shell.state !== 'playing';
+        var s = aiHost.state();
+        var mode = s.available ? s.mode : 'unavailable';
+        els.aiBadge.dataset.mode = mode;
+        els.aiBadge.textContent = s.available ? MODE_LABEL[s.mode] || s.mode : 'AI 사용 불가';
+        els.aiAdapter.textContent = s.adapter === 'mock' ? 'mock 어댑터' : '';
+
+        var hasPolicy = !!s.policy;
+        els.aiStart.hidden = !(s.available && s.mode === 'manual');
+        els.aiStart.disabled = !hasPolicy;
+        els.aiStart.title = hasPolicy ? '' : '정책이 없습니다. ?policy=<id> 로 정책 번들을 지정하세요.';
+        els.aiSuspend.hidden = !(s.available && s.mode === 'ai_active');
+        els.aiResume.hidden = !(s.available && s.mode === 'ai_suspended');
+        els.aiManual.hidden = !(s.available && s.mode !== 'manual');
+
+        // 메시지 우선순위: 사용 불가 → 방금 한 요청의 결과 → 오류 → 전환 사유 → 정책 없음
+        var msg = '', kind = 'info';
+        if (!s.available) {
+            msg = s.unavailableReason || ''; kind = 'warn';
+        } else if (aiState.resultMessage) {
+            msg = aiState.resultMessage; kind = 'warn';
+        } else if (s.lastError && s.mode === 'manual') {
+            msg = s.lastError.message || s.reasonInfo.text; kind = 'error';
+        } else if (s.reason !== 'none') {
+            msg = s.reasonInfo.text; kind = s.reasonInfo.kind;
+        } else if (!hasPolicy) {
+            msg = '정책이 없습니다. ?policy=<id> 로 정책 번들을 지정하세요.'; kind = 'warn';
+        }
+        els.aiMessage.textContent = msg;
+        els.aiMessage.dataset.kind = kind;
+        els.aiPanel.dataset.attention = (kind === 'warn' || kind === 'error') && !!msg ? 'true' : 'false';
+
+        els.aiWarnings.innerHTML = '';
+        s.warnings.forEach(function (w) {
+            var li = document.createElement('li');
+            li.textContent = w.text;
+            els.aiWarnings.appendChild(li);
+        });
+
+        els.aiDetails.hidden = !aiState.detailsOpen;
+        if (aiState.detailsOpen) {
+            els.aiPolicy.textContent = '정책: ' + (s.policy ? s.policy.id + (s.policy.version ? ' ' + s.policy.version : '') : '없음')
+                + ' · 빌드: ' + s.buildFlavor + (s.taiseiCommit ? ' (Taisei ' + String(s.taiseiCommit).slice(0, 8) + ')' : '')
+                + ' · 규칙 보존: ' + s.rulesPreserved;
+            var d = s.decision;
+            els.aiDecision.textContent = '에피소드 ' + (s.episodeId === null ? '-' : s.episodeId) + ' · 프레임 ' + (s.lastFrame === null ? '-' : s.lastFrame)
+                + ' · 판단 ' + d.count + '회' + (d.count ? ' p50 ' + d.p50_ms.toFixed(2) + ' ms / p95 ' + d.p95_ms.toFixed(2) + ' ms / 최대 ' + d.max_ms.toFixed(2) + ' ms' : '');
+        }
+    }
+
+    var RESULT_TEXT = {
+        unavailable: 'AI 브리지가 연결되지 않았습니다.',
+        no_policy: '정책이 없습니다. ?policy=<id> 로 정책 번들을 지정하세요.',
+        policy_error: '정책을 시작하지 못했습니다.',
+        bridge_error: '브리지 호출이 실패했습니다.',
+        noop: '이미 그 상태입니다.',
+    };
+
+    function aiRequest(fn) {
+        var result = fn();
+        // not_playing은 상태 사유(not_playing)가 이미 메시지로 나오므로 별도 결과 문구를 쓰지 않는다.
+        aiState.resultMessage = result === 'ok' || result === 'not_playing' ? '' : (RESULT_TEXT[result] || String(result));
+        if (result === 'not_playing') aiState.resultMessage = aiHost.reasonInfo('not_playing').text;
+        renderAI();
+        focusCanvas();
+    }
+
+    els.aiStart.addEventListener('click', function () { aiRequest(function () { return aiHost.enable(); }); });
+    els.aiResume.addEventListener('click', function () { aiRequest(function () { return aiHost.resume(); }); });
+    els.aiSuspend.addEventListener('click', function () { aiRequest(function () { return aiHost.suspend('host_request'); }); });
+    els.aiManual.addEventListener('click', function () { aiRequest(function () { return aiHost.disable('host_request'); }); });
+    els.aiDetailsToggle.addEventListener('click', function () {
+        aiState.detailsOpen = !aiState.detailsOpen;
+        els.aiDetailsToggle.textContent = aiState.detailsOpen ? '▴' : '▾';
+        renderAI();
+        focusCanvas();
+    });
+    aiHost.onEvent(function (event) {
+        if (event.type === 'transition' || event.type === 'error') aiState.resultMessage = '';
+        if (event.type === 'transition') log('[AI] ' + event.state + ' (' + event.reason + ')');
+        if (event.type === 'error') log('[AI] error ' + event.code + ': ' + event.message);
+        renderAI();
+    });
+
+    // 정책 번들 불러오기. id(ai/policies/<id>/index.js) 또는 URL을 받는다. 실행기도 이 함수를 쓴다.
+    aiHost.loadPolicy = function (idOrUrl, config) {
+        var url = /[\/.]/.test(idOrUrl) ? idOrUrl : cfg.aiPolicyBase + idOrUrl + '/' + cfg.aiPolicyEntry;
+        var abs = new URL(url, document.baseURI).href;
+        return import(abs).then(function (mod) {
+            var base = (mod.meta && mod.meta.default_config) || {};
+            var merged = Object.assign({}, base, config || {});
+            aiHost.setPolicyModule(mod, merged, { id: (mod.meta && mod.meta.id) || idOrUrl, url: abs });
+            log('[AI] policy loaded: ' + abs);
+            return aiHost.state().policy;
+        });
+    };
+
+    function loadBuildInfo() {
+        return fetch(cfg.buildInfoUrl, { cache: 'no-store' }).then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+        }).then(function (info) {
+            var b = info && info.build ? info.build : {};
+            // 릴리스 산출물은 flavor를 기록하지 않는다(#20 v0.1 B). 개발자 빌드만 flavor: "developer"를 남긴다.
+            aiHost.setBuildInfo({
+                flavor: b.flavor || 'release',
+                taiseiCommit: b.taiseiCommit || null,
+                source: cfg.buildInfoUrl,
+            });
+        }).catch(function (e) {
+            aiHost.setBuildInfo({ flavor: 'unknown', source: null });
+            log('[AI] build-info.json을 읽지 못했습니다: ' + describeError(e));
+        });
+    }
+
+    function attachMock() {
+        if (!cfg.aiMockScript) {
+            return Promise.reject(new Error('mock 어댑터가 설정되지 않았습니다(shell-config.js의 aiMockScript). 검증용 사이트에서만 쓴다.'));
+        }
+        return loadScript(cfg.aiMockScript).then(function () {
+            var mock = window.taiseiAIMock;
+            if (!mock) throw new Error('mock 어댑터가 전역 taiseiAIMock을 정의하지 않습니다.');
+            var adapter = mock.createMockAdapter();
+            adapter.sim.start();
+            aiHost.attach(adapter, 'mock');
+            aiHost.setPolicy(mock.createSweepPolicy());
+            window.taiseiAIMockAdapter = adapter; // 검증용: adapter.sim으로 일시정지·사용자 키 등을 재현한다
+            // mock에서는 실제 키보드로 사용자 키 전환(CONTRACT 4.3)과 일시정지(Esc)를 흉내 낸다. 실제 브리지는 C에서 처리한다.
+            var MOCK_GAME_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'z', 'Z', 'x', 'X', 'c', 'C', 'Shift', 'Control'];
+            window.addEventListener('keydown', function (event) {
+                if (event.repeat) return;
+                if (event.key === 'Escape') adapter.sim.setPaused(!adapter.state().paused);
+                else if (MOCK_GAME_KEYS.indexOf(event.key) !== -1) adapter.sim.userKey();
+            }, true);
+            log('[AI] mock 어댑터 연결(실제 게임 입력이 아님)');
+        });
+    }
+
+    function attachRealBridge() {
+        var inst = shell.instance;
+        if (!inst || typeof inst._taisei_ai_abi_version !== 'function') {
+            aiHost.setUnavailable('이 게임 빌드에는 AI 브리지가 없습니다(taisei_ai_* 내보내기 없음).');
+            return Promise.resolve(false);
+        }
+        var url = new URL(cfg.aiBridgeUrl, document.baseURI).href;
+        return import(url).then(function (mod) {
+            aiHost.attach(mod.createBridge(inst), 'real');
+            log('[AI] 브리지 연결: ' + url);
+            return true;
+        }).catch(function (e) {
+            aiHost.setUnavailable('AI 브리지를 불러오지 못했습니다: ' + (e && e.message ? e.message : e));
+            aiState.showUnavailable = true; // 브리지가 있는데 불러오지 못한 것은 사용자가 알아야 하는 결함이다
+            log('[AI] 브리지 연결 실패: ' + describeError(e));
+            return false;
+        });
+    }
+
+    function initAI() {
+        var req = aiQuery('ai');
+        aiState.requested = req;
+        if (req === '0' || req === 'off') { aiHost.markReady(); return; }
+        var forced = req !== null; // ?ai= 가 있으면 브리지가 없어도 패널로 사유를 알린다
+        var attach = req === 'mock' ? attachMock() : attachRealBridge();
+        Promise.all([loadBuildInfo(), attach]).then(function () {
+            var policyId = aiQuery('policy');
+            if (aiHost.state().available && policyId && req !== 'mock') {
+                return aiHost.loadPolicy(policyId).catch(function (e) {
+                    aiHost.reportError('policy_error', '정책을 불러오지 못했습니다: ' + (e && e.message ? e.message : e));
+                    log('[AI] policy load failed: ' + describeError(e));
+                });
+            }
+        }).catch(function (e) {
+            aiHost.setUnavailable('AI 연결 중 오류: ' + (e && e.message ? e.message : e));
+            log('[AI] init failed: ' + describeError(e));
+        }).then(function () {
+            aiShowPanel(forced || aiState.showUnavailable || aiHost.state().available);
+            aiHost.markReady();
+        });
+    }
+
     // ---------- 게임 로딩 ----------
     function loadScript(url) {
         return new Promise(function (resolve, reject) {
@@ -300,6 +547,7 @@
                 setState('playing');
                 showStatus('');
                 focusCanvas();
+                initAI();
             },
             print: function () {
                 var text = joinArgs(arguments);
@@ -401,6 +649,7 @@
     window.addEventListener('blur', function () {
         log('[SHELL] window blur');
         if (shell.state === 'playing') els.focusHint.hidden = false;
+        suspendAIOnFocusLoss('blur');
     });
     window.addEventListener('focus', function () {
         log('[SHELL] window focus');
@@ -408,6 +657,7 @@
     });
     document.addEventListener('visibilitychange', function () {
         log('[SHELL] visibility: ' + document.visibilityState);
+        if (document.visibilityState === 'hidden') suspendAIOnFocusLoss('hidden');
     });
 
     // 업스트림 셸과 같은 방식으로 canvas 픽셀 크기를 CSS 크기에 맞춘다.
