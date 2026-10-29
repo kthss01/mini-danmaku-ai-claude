@@ -73,6 +73,7 @@ OWNER_REASONS = ["none", "pause", "focus_lost", "dialog", "stage_end", "restart"
                  "policy_error", "policy_deadline", "observation_invalid", "bridge_error", "game_over", "not_playing"]
 # 이벤트 이름 → 전환 후 소유권 상태
 _EVENT_OWNER = {"ai_enable": "ai_active", "ai_resume": "ai_active", "ai_suspend": "ai_suspended", "ai_disable": "manual"}
+# 호스트 API(PR #42)의 {type: 'transition', ...} 이벤트는 전환 후 상태를 state·mode·to 중 하나로 싣는다고 가정한다.
 # (소유권 상태, 사유) → (run.status, run.reason). 이벤트(episode_end) 없이도 브리지 상태만으로 끝을 안다.
 DERIVED_END = {
     ("ai_suspended", "stage_end"): ("completed", "stage_end"),
@@ -102,11 +103,35 @@ def normalize_owner_reason(value) -> str | None:
     return value if value in OWNER_REASONS else None
 
 
+def _first(state: dict, *keys):
+    for key in keys:
+        if key in state and state[key] is not None:
+            return state[key]
+    return None
+
+
+def owner_of(state: dict | None) -> str | None:
+    """어댑터의 owner_state(이름·정수) 또는 호스트 API의 mode."""
+    return normalize_owner_state(_first(state, "owner_state", "mode")) if isinstance(state, dict) else None
+
+
+def reason_of(state: dict | None) -> str | None:
+    """어댑터의 owner_reason 또는 호스트 API의 reason."""
+    return normalize_owner_reason(_first(state, "owner_reason", "reason")) if isinstance(state, dict) else None
+
+
 def state_frame(state: dict | None):
     if not isinstance(state, dict):
         return None
-    frame = state.get("frame", state.get("last_frame"))
+    frame = _first(state, "frame", "last_frame", "lastFrame")
     return frame if isinstance(frame, int) and not isinstance(frame, bool) else None
+
+
+def state_episode_id(state: dict | None):
+    if not isinstance(state, dict):
+        return None
+    value = _first(state, "episode_id", "episodeId")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 @dataclass
@@ -228,9 +253,13 @@ class EpisodeDriver:
         for event in events:
             if isinstance(event, dict) and event.get("type") == "artifact":
                 self._save_artifact(event, index, result)
-            if isinstance(event, dict) and event.get("type") in _EVENT_OWNER:
-                reason = normalize_owner_reason(event.get("reason")) or "none"
-                self._record_owner(result, _EVENT_OWNER[event["type"]], reason, event.get("frame"))
+            if isinstance(event, dict):
+                owner = _EVENT_OWNER.get(event.get("type"))
+                if event.get("type") == "transition":
+                    owner = normalize_owner_state(_first(event, "state", "mode", "to"))
+                if owner is not None:
+                    reason = normalize_owner_reason(event.get("reason")) or "none"
+                    self._record_owner(result, owner, reason, _first(event, "frame", "lastFrame"))
             result.events.append(event)
 
     def _record_owner(self, result: EpisodeResult, owner: str, reason: str, frame) -> None:
@@ -371,6 +400,17 @@ class EpisodeDriver:
         cfg = self.cfg
         # 브리지가 나타날 때까지 기다린다. 끝내 없으면 실험을 시작할 수 없다.
         ready = wait_until(lambda: self._bridge_ready(conn, index, result), timeout=min(30.0, cfg.startup_timeout_s))
+        if ready:
+            # 호스트 API의 ready Promise(브리지 연결·빌드 정보 확인이 끝나는 시점)를 기다린다. 없으면 건너뛴다.
+            try:
+                conn.evaluate("(window.taiseiAI.ready && typeof window.taiseiAI.ready.then === 'function')"
+                              " ? window.taiseiAI.ready.then(function () { return true; }) : true",
+                              await_promise=True, timeout=cfg.startup_timeout_s)
+            except CdpError as exc:
+                result.status, result.reason = "error", "runner_error"
+                result.detail = f"taiseiAI.ready가 실패했습니다: {exc}"
+                result.startup_failed = True
+                return
         if not ready:
             result.status, result.reason = "error", "runner_error"
             result.detail = "bridge_missing: window.taiseiAI가 없거나 준비되지 않았습니다(브리지가 이 빌드에 없음)"
@@ -381,8 +421,21 @@ class EpisodeDriver:
         options = {"episode_index": index, "scenario": cfg.scenario(),
                    "policy": {"name": cfg.policy, "version": cfg.policy_version, "params": cfg.policy_params},
                    "limits": {"max_frames": cfg.max_frames}}
-        conn.evaluate(f"window.taiseiAI.enable({json.dumps(options)})", await_promise=True, timeout=30)
+        if cfg.policy != "none" and self._has_method(conn, "loadPolicy"):
+            try:
+                conn.evaluate(f"window.taiseiAI.loadPolicy({json.dumps(cfg.policy)}, {json.dumps(cfg.policy_params)})",
+                              await_promise=True, timeout=30)
+            except CdpError as exc:
+                result.status, result.reason = "error", "policy_error"
+                result.detail = f"정책 {cfg.policy!r}을(를) 불러오지 못했습니다: {exc}"
+                return
+        # 호스트 API의 enable()은 반환 코드('ok'·'not_playing'·'no_policy' 등)를 준다. 옵션은 무시될 수 있다.
+        code = conn.evaluate(f"window.taiseiAI.enable({json.dumps(options)})", await_promise=True, timeout=30)
         result.started_at = utc_now()
+        if isinstance(code, str) and code not in ("ok", "noop"):
+            result.status, result.reason = "error", "policy_error" if code in ("no_policy", "policy_error") else "runner_error"
+            result.detail = f"enable()이 {code!r}를 돌려줬습니다"
+            return
         result.t_enable = time.monotonic()
         result.enable_frame = state_frame(self._poll(conn, index, result).get("ai"))
         deadline = t1 + cfg.wall_timeout_s
@@ -413,15 +466,15 @@ class EpisodeDriver:
                 result.status, result.reason = "timeout", "wall_timeout"
                 result.detail = f"벽시계 한도 {cfg.wall_timeout_s}초 초과"
                 break
-            time.sleep(POLL_INTERVAL_S)
+            time.sleep(self._poll_delay(data.get("ai"), result))
         result.running_s = round(time.monotonic() - t1, 3)
 
     def _derive_end(self, state: dict | None, result: EpisodeResult):
         """state()의 소유권 전환·프레임으로 에피소드 끝을 파생한다. 끝이 아니면 None."""
         if not isinstance(state, dict):
             return None
-        owner = normalize_owner_state(state.get("owner_state"))
-        reason = normalize_owner_reason(state.get("owner_reason"))
+        owner = owner_of(state)
+        reason = reason_of(state)
         if owner is not None:
             self._record_owner(result, owner, reason or "none", state_frame(state))
         outcome = DERIVED_END.get((owner, reason))
@@ -432,6 +485,17 @@ class EpisodeDriver:
             return ("completed", "frame_limit",
                     f"runner_detected: 프레임 {result.enable_frame}→{frame} (한도 {self.cfg.max_frames}, 폴링 간격만큼 넘을 수 있음)")
         return None
+
+    def _poll_delay(self, state: dict | None, result: EpisodeResult) -> float:
+        """프레임 한도가 가까우면 폴링 간격을 줄여 한도를 넘는 프레임 수를 줄인다(60fps에서 0.25초 = 15프레임)."""
+        frame = state_frame(state)
+        if frame is not None and result.enable_frame is not None:
+            if self.cfg.max_frames - (frame - result.enable_frame) <= 120:
+                return 0.04
+        return POLL_INTERVAL_S
+
+    def _has_method(self, conn: CdpConnection, name: str) -> bool:
+        return bool(conn.evaluate(f"typeof (window.taiseiAI && window.taiseiAI.{name}) === 'function'"))
 
     def _bridge_ready(self, conn: CdpConnection, index: int, result: EpisodeResult) -> bool:
         data = self._poll(conn, index, result)
@@ -457,7 +521,7 @@ class EpisodeDriver:
             time.sleep(0.2)  # 한 프레임 이상 지나 입력이 실제로 풀리게 한다.
             data = self._poll(conn, index, result)
             state = data.get("ai") or {}
-            owner = normalize_owner_state(state.get("owner_state"))
+            owner = owner_of(state)
             inp = state.get("input")
             if isinstance(inp, dict):
                 counters = {k: inp.get(k, 0) for k in ("hold", "pending_edges", "queued_actions")}

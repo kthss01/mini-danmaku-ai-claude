@@ -262,6 +262,19 @@ class SiteRunTests(unittest.TestCase):
         self.assertIn("not_playing", ep["run"]["detail"])
         self.assertEqual(ep["run"]["error_message"], ep["run"]["detail"])
 
+    def test_policy_load_failure_is_policy_error(self):
+        done = self.execute("fixture-badpolicy")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        ep = self.episode()
+        self.assertEqual((ep["run"]["status"], ep["run"]["reason"]), ("error", "policy_error"))
+        self.assertIn("fixture-badpolicy", ep["run"]["detail"])
+        self.assert_clean()
+
+    def test_policy_none_skips_load_policy(self):
+        done = self.execute("none")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.episode()["run"]["status"], "completed")
+
     def test_artifact_events_are_saved(self):
         done = self.execute("fixture-artifact")
         self.assertEqual(done.returncode, 0, done.stderr)

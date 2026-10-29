@@ -12,7 +12,7 @@ from pathlib import Path
 from . import config as cfgmod
 from .browser import find_browser
 from .config import ArgError, RunConfig, REPO_ROOT
-from .episode import EpisodeDriver, EpisodeResult, state_frame
+from .episode import EpisodeDriver, EpisodeResult, state_episode_id, state_frame
 from .provenance import BuildError, code_block, inspect_site, main_commit_and_dirty
 from .runfiles import (EPISODE_SCHEMA, RUN_SCHEMA, SUMMARY_SCHEMA, RunDir, RunLogger, new_run_id, utc_now,
                        write_json)
@@ -31,7 +31,7 @@ def _episode_document(cfg: RunConfig, run_id: str, code: dict, result: EpisodeRe
     return {
         "schema": EPISODE_SCHEMA,
         "run_id": run_id,
-        "episode_id": (result.last_state or {}).get("episode_id") if isinstance(result.last_state, dict) else None,
+        "episode_id": state_episode_id(result.last_state),
         "experiment_id": cfg.experiment_id,
         "episode_index": result.index,
         "started_at": result.started_at,

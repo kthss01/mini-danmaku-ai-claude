@@ -97,8 +97,8 @@ python -m unittest discover -s tests/ai-runner -v
 
 1. 페이지 이동 전에 **초기화 스크립트**로 `window.taiseiAIRun`(6.3)과 이벤트 수집기를 심는다.
 2. `window.taiseiShell.state`가 `ready`가 되면 `#start`를 **실제 마우스 입력(CDP)**으로 누른다. `playing`이 되면 시작 완료. `error`·`unsupported`·`exited`면 시작 실패.
-3. (`bridge` 모드) `window.taiseiAI`가 있고 `state().ready !== false`가 될 때까지 기다린 뒤 `onEvent(cb)`를 구독한다. 끝내 없으면 시작 실패(종료 코드 4).
-4. **시작 신호**: `await taiseiAI.enable(options)`. `options = { episode_index, scenario, policy:{name,version,params}, limits:{max_frames} }`.
+3. (`bridge` 모드) `window.taiseiAI`가 나타날 때까지 기다려 `onEvent(cb)`를 구독하고, `await taiseiAI.ready`(있으면)로 호스트의 초기화(브리지 연결·빌드 정보)를 기다린다. 끝내 없으면 시작 실패(종료 코드 4).
+4. **시작 신호**: `--policy`가 `none`이 아니면 `await taiseiAI.loadPolicy(policy, params)`(실패 → `error / policy_error`), 이어서 `await taiseiAI.enable(options)`. 호스트의 `enable()`은 반환 코드를 주므로 `'ok'`·`'noop'`이 아니면 시작하지 못한 것이다(`no_policy`·`policy_error` → `error / policy_error`, 그 밖의 `not_playing`·`unavailable`·`bridge_error` → `error / runner_error`). `options = { episode_index, scenario, policy:{name,version,params}, limits:{max_frames} }`는 호스트가 무시해도 된다.
 5. 0.25초마다 `state()`와 쌓인 이벤트를 읽는다. 아래 중 하나가 되면 감시를 끝낸다(위에서부터 먼저 맞는 것).
    - `episode_end` 이벤트(선택, 호스트가 보내면 우선) → `run.status`는 이벤트의 `status`(`completed`·`error`·`aborted`, 없으면 `completed`), `run.reason`은 이벤트의 `reason`
    - `state()`의 소유권 전환으로 파생(브리지 계약 `CONTRACT.md` 4절의 사유 코드). 이벤트가 없어도 브리지만으로 끝을 안다.
@@ -115,7 +115,7 @@ python -m unittest discover -s tests/ai-runner -v
      | `manual` / `bridge_error` | `error` / `runner_error` |
 
      `pause`·`focus_lost` 등 그 밖의 정지는 끝으로 보지 않고 이벤트·`owner_transitions`로만 남긴다(계획 외 정지 판정은 평가).
-   - 논리 프레임 한도: `state().frame`(없으면 `last_frame`)이 `enable` 시점 프레임보다 `max_frames` 이상 늘면 `completed / frame_limit`. **한도는 `enable` 옵션으로 호스트에 넘겨 호스트가 정확히 집행하는 것이 원칙**이고, 실행기의 감지는 0.25초 폴링이라 몇 프레임 넘길 수 있는 보조 수단이다(그때 `run.detail`에 `runner_detected` 표시).
+   - 논리 프레임 한도: `state()`의 프레임(`frame`·`last_frame`·`lastFrame`)이 `enable` 시점 프레임보다 `max_frames` 이상 늘면 `completed / frame_limit`. 현재 호스트 API(PR #42)에는 한도 옵션이 없어 **실행기가 폴링으로 감지**한다(한도 120프레임 전부터 0.04초 간격으로 좁혀 폴링하지만 몇 프레임 넘길 수 있고, 그때 `run.detail`에 `runner_detected`를 적는다). 호스트가 한도를 정확히 집행하게 되면(`enable` 옵션으로 `limits.max_frames`를 이미 넘기고 있다) 그 값을 따른다. 스펠·스테이지 종료로 끝나는 실험에서는 프레임 한도가 안전장치일 뿐이다.
    - 벽시계 한도 → `timeout / wall_timeout`
    - 셸이 `error`·`exited`·`unsupported`가 되거나 브라우저 연결이 끊김 → `error / runner_error`
 6. **정지 신호**: `await taiseiAI.disable('host_request')`. 직후 `state()`로 입력 해제를 확인한다(6.2).
@@ -130,13 +130,13 @@ python -m unittest discover -s tests/ai-runner -v
   | 필드 | 뜻 |
   | --- | --- |
   | `ready` | 브리지 준비 여부(없으면 준비됨으로 본다) |
-  | `owner_state`, `owner_reason` | 이름 문자열 또는 정수 코드(브리지 계약 4절의 0=`manual`·1=`ai_active`·2=`ai_suspended`, 사유 코드 0~13). 둘 다 이해한다 |
-  | `frame` 또는 `last_frame`, `episode_id`, `gameover` | 논리 프레임, 에피소드 번호, 종료 유형(`WIN`·`DEFEAT` 등). 브리지 `status` 블록 필드 |
+  | `owner_state`·`owner_reason`(어댑터) 또는 `mode`·`reason`(호스트 API, PR #42) | 이름 문자열 또는 정수 코드(브리지 계약 4절의 0=`manual`·1=`ai_active`·2=`ai_suspended`, 사유 코드 0~13). 두 이름과 두 형태 모두 이해한다 |
+  | `frame`·`last_frame`·`lastFrame`, `episode_id`·`episodeId`, `gameover` | 논리 프레임, 에피소드 번호, 종료 유형(`WIN`·`DEFEAT` 등) |
   | `input` | (선택) `{ hold, pending_edges, queued_actions }` 정수 |
   | `settings.shot_inverted` | (선택) 실제 적용된 "Shoot by default" 값 |
 
   입력 해제 판정: `disable('host_request')` 뒤 `input`이 있으면 모두 0이고 `owner_state`가 `manual`/`ai_suspended`일 때만 해제됨(`basis: counters`). `input`이 없으면 `owner_state == manual`이면 해제됨으로 본다(브리지 계약 4.1: `disable`은 대기 중인 액션 슬롯·엣지를 모두 버린다. 증거 수준이 낮으므로 `basis: owner_state`로 구분해 기록). 둘 다 알 수 없으면 `unknown`이며, `released: false`일 때만 종료 코드 6이다.
-- `onEvent` 이벤트는 `{ type, frame?, episode_id?, ... }`. 소유권 전환(`ai_enable`·`ai_suspend`·`ai_resume`·`ai_disable`, `reason` 포함)은 `owner_transitions`에도 반영한다. 실행기가 의미를 두는 것은 둘뿐이다.
+- `onEvent` 이벤트는 `{ type, frame?, episode_id?, ... }`. 소유권 전환(`ai_enable`·`ai_suspend`·`ai_resume`·`ai_disable`, 또는 호스트의 `{type:'transition', mode|state|to, reason}`)은 `owner_transitions`에도 반영한다. 호스트의 전환 이벤트 필드는 세션 5가 확정해 주기 바란다(현재 `mode`·`state`·`to` 중 하나로 가정). 실행기가 의미를 두는 것은 둘뿐이다.
   - `episode_end`(선택): `{ status?, reason, frame }` — 호스트가 종료를 직접 알릴 때. 없어도 위 파생 규칙으로 끝을 안다.
   - `artifact`: `{ name, encoding: "utf8"|"base64", data }` — 큰 데이터(trace·리플레이)를 조각으로 보낸다. 같은 `name`의 조각은 이어 붙여 `episodes/NNNN/<name>`에 저장한다. 이름은 `[A-Za-z0-9._-]{1,64}`.
   나머지 이벤트(`ai_enable`·`ai_suspend`·`hit`·`bomb` 등)는 그대로 `episodes/NNNN.events.jsonl`에 쌓는다.
@@ -224,3 +224,4 @@ artifacts/runs/<run_id>/            # run_id = YYYYMMDDTHHMMSSZ-<6hex>, artifact
 1. 최신 `origin/main`의 `game/taisei` gitlink와 fork(`kthss01/taisei`) `master`의 머지 커밋을 확인한다. 다른 작업(프롤로그 건너뛰기·자동 발사·한국어·캐릭터 이미지)이 머지한 fork 변경을 되돌리지 않는다.
 2. 갱신 대상은 세션 2의 브리지 fork PR 머지 커밋을 포함한 최신 fork `master` 커밋이다.
 3. gitlink 갱신 PR에 웹 재빌드 회귀(릴리스·개발자 빌드, `scripts/check-web-assets.py`, 실행기 smoke)를 함께 보고한다.
+4. 같은 PR에서 `build-web.ps1`이 `ai/bridge/taisei-ai-bridge.mjs`를 `site/game/ai/bridge/`로, `ai/policies/<id>/`를 `site/game/ai/policies/<id>/`로 패키징하게 한다(세션 5 호스트 API가 이 위치를 가정한다. 셸 파일 `web/game/ai-host.js`는 이미 `web/game/` 복사에 포함되어 `webShellSha256`에 들어간다). 어댑터·정책 파일 해시도 `build-info.json`에 남긴다. 이 PR은 계약 PR #39와 정책 PR #45가 머지된 뒤에 한다.
