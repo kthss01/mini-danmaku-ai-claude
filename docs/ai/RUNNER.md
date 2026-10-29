@@ -138,7 +138,7 @@ python -m unittest discover -s tests/ai-runner -v
   입력 해제 판정: `disable('host_request')` 뒤 `input`이 있으면 모두 0이고 `owner_state`가 `manual`/`ai_suspended`일 때만 해제됨(`basis: counters`). `input`이 없으면 `owner_state == manual`이면 해제됨으로 본다(브리지 계약 4.1: `disable`은 대기 중인 액션 슬롯·엣지를 모두 버린다. 증거 수준이 낮으므로 `basis: owner_state`로 구분해 기록). 둘 다 알 수 없으면 `unknown`이며, `released: false`일 때만 종료 코드 6이다.
 - `onEvent` 이벤트는 `{ type, frame?, episode_id?, ... }`. 소유권 전환(`ai_enable`·`ai_suspend`·`ai_resume`·`ai_disable`, 또는 호스트의 `{type:'transition', mode|state|to, reason}`)은 `owner_transitions`에도 반영한다. 호스트의 전환 이벤트 필드는 세션 5가 확정해 주기 바란다(현재 `mode`·`state`·`to` 중 하나로 가정). 실행기가 의미를 두는 것은 둘뿐이다.
   - `episode_end`(선택): `{ status?, reason, frame }` — 호스트가 종료를 직접 알릴 때. 없어도 위 파생 규칙으로 끝을 안다.
-  - `artifact`: `{ name, encoding: "utf8"|"base64", data }` — 큰 데이터(trace·리플레이)를 조각으로 보낸다. 같은 `name`의 조각은 이어 붙여 `episodes/NNNN/<name>`에 저장한다. 이름은 `[A-Za-z0-9._-]{1,64}`.
+  - `artifact`: `{ name, encoding: "utf8"|"base64", data }` — 큰 데이터(trace·리플레이)를 조각으로 보낸다. 같은 `name`의 조각은 이어 붙여 저장한다. `trace.jsonl`은 `episodes/NNNN.trace.jsonl`(`evidence.trace`), `replay.tsr`은 `episodes/NNNN.replay.tsr`(`evidence.replay`)로 평가 스키마의 기본 경로에 두고, 그 밖의 이름은 `episodes/NNNN/<name>`이다. 이름은 `[A-Za-z0-9._-]{1,64}`.
   나머지 이벤트(`ai_enable`·`ai_suspend`·`hit`·`bomb` 등)는 그대로 `episodes/NNNN.events.jsonl`에 쌓는다.
 - 실행기는 이벤트를 해석해 지표를 만들지 않는다. 지표는 평가가 그 파일에서 만든다.
 
@@ -165,7 +165,7 @@ python -m unittest discover -s tests/ai-runner -v
 
 ```text
 artifacts/runs/<run_id>/            # run_id = YYYYMMDDTHHMMSSZ-<6hex>, artifacts/는 Git 제외
-├── run.json          # 실행 매니페스트(아래). 시작 때 쓰고 끝에 다시 쓴다(중간에 죽어도 finished:false 기록이 남음)
+├── run.json          # 실행 매니페스트(아래). `args`=해석된 실행 인자, `config`=평가 스키마의 config 모양(에피소드와 같은 블록). 시작 때 쓰고 끝에 다시 쓴다(중간에 죽어도 finished:false 기록이 남음)
 ├── summary.json      # 요청·시도 수, 상태별·사유별 개수, 종료 코드. 지표는 없다
 ├── build-info.json   # 사용한 site의 출처 기록 사본
 ├── episodes/

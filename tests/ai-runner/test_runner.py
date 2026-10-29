@@ -270,6 +270,30 @@ class SiteRunTests(unittest.TestCase):
         self.assertIn("not_playing", ep["run"]["detail"])
         self.assertEqual(ep["run"]["error_message"], ep["run"]["detail"])
 
+    def test_output_is_valid_for_evaluation_tool_schemas(self):
+        """평가 도구(evaluation/, #23)의 run·episode 스키마로 실행기 출력을 검증하고 평가가 읽을 수 있는지 본다."""
+        evaluate = S.REPO_ROOT / "evaluation" / "evaluate.py"
+        if not evaluate.is_file():
+            self.skipTest("evaluation/evaluate.py가 없는 브랜치")
+        dev_root = self.tmp / "dev"
+        dev_root.mkdir()
+        dev_site = S.make_site(dev_root, "developer")
+        done = S.run_cli(["--site", str(dev_site), "--build-flavor", "developer", "--spell", "s1",
+                          "--policy", "fixture-artifact", "--max-frames", "120"], self.runs, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        run_dir = S.last_run_dir(self.runs)
+
+        def tool(*args):
+            return subprocess.run([sys.executable, "-X", "utf8", str(evaluate), *args], capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=120)
+
+        for kind, name in (("run", "run.json"), ("episode", "episodes/0001.json")):
+            checked = tool("validate", kind, str(run_dir / name))
+            self.assertEqual(checked.returncode, 0, f"{kind}: {checked.stdout}{checked.stderr}")
+        evaluated = tool("evaluate", str(run_dir), "--out", str(self.tmp / "evaluation"))
+        self.assertEqual(evaluated.returncode, 0, evaluated.stdout + evaluated.stderr)
+        self.assertTrue((self.tmp / "evaluation" / "evaluation.json").is_file())
+
     def test_policy_load_failure_is_policy_error(self):
         done = self.execute("fixture-badpolicy")
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -286,9 +310,13 @@ class SiteRunTests(unittest.TestCase):
     def test_artifact_events_are_saved(self):
         done = self.execute("fixture-artifact")
         self.assertEqual(done.returncode, 0, done.stderr)
-        trace = S.last_run_dir(self.runs) / "episodes" / "0001" / "trace.jsonl"
+        # trace는 평가 스키마의 기본 경로(episodes/NNNN.trace.jsonl)로 저장되고 evidence.trace가 가리킨다.
+        trace = S.last_run_dir(self.runs) / "episodes" / "0001.trace.jsonl"
         self.assertEqual(trace.read_text(encoding="utf-8"), '{"frame":1}\n{"frame":2}\n')
-        self.assertIn("episodes/0001/trace.jsonl", self.episode()["evidence"]["artifacts"])
+        evidence = self.episode()["evidence"]
+        self.assertEqual(evidence["trace"], "episodes/0001.trace.jsonl")
+        self.assertIsNone(evidence["replay"])
+        self.assertIn("episodes/0001.trace.jsonl", evidence["artifacts"])
 
     def test_multiple_episodes_use_fresh_profiles(self):
         done = self.execute("fixture-idle", "--episodes", "2")

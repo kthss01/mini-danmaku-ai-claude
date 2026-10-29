@@ -37,19 +37,7 @@ def _episode_document(cfg: RunConfig, run_id: str, code: dict, result: EpisodeRe
         "started_at": result.started_at,
         "ended_at": result.ended_at,
         "code": code,
-        "config": {
-            "scenario": cfg.scenario(),
-            "policy": {"name": cfg.policy, "version": cfg.policy_version, "params": cfg.policy_params,
-                       "params_sha256": hashlib.sha256(json.dumps(cfg.policy_params, sort_keys=True, ensure_ascii=False,
-                                                                  separators=(",", ":")).encode("utf-8")).hexdigest()},
-            # 시드를 지정하지 않으므로 게임이 makeseed()를 쓴다. 실제 값은 브리지 관측(seed_hi:seed_lo)이 알려 준다.
-            "seed": {"control": "random", "required": False, "requested": None, "actual": None, "source": None},
-            "limits": {"max_frames": cfg.max_frames, "wall_timeout_s": cfg.wall_timeout_s},
-            "mode": cfg.mode,
-            "shot_inverted": cfg.shot_inverted,
-            "shot_inverted_source": "forced" if cfg.shot_inverted is not None else "unknown",
-            "game_args": cfg.game_args(),
-        },
+        "config": config_block(cfg),
         "run": {
             "status": result.status,
             "reason": result.reason,
@@ -59,8 +47,7 @@ def _episode_document(cfg: RunConfig, run_id: str, code: dict, result: EpisodeRe
             "error_message": result.detail if result.status in ("error", "timeout") else None,
         },
         "owner_transitions": result.owner_transitions,
-        "final": {"gameover": (result.last_state or {}).get("gameover") if isinstance(result.last_state, dict) else None,
-                  "last_frame": state_frame(result.last_state)},
+        "final": _final_block(result),
         "result": None,
         "runner": {
             "startup_s": result.startup_s,
@@ -81,12 +68,40 @@ def _episode_document(cfg: RunConfig, run_id: str, code: dict, result: EpisodeRe
             "event_count": len(result.events),
         },
         "evidence": {
+            "trace": None, "replay": None,
             **result.evidence,
             "events": f"{extra_dir}.events.jsonl",
             "artifacts": result.artifacts,
             "log": "logs/runner.log",
         },
     }
+
+
+def config_block(cfg: RunConfig) -> dict:
+    """에피소드와 run.json이 함께 쓰는 config 블록(평가 스키마 episode.schema.json의 config 모양)."""
+    return {
+        "scenario": cfg.scenario(),
+        "policy": {"name": cfg.policy, "version": cfg.policy_version, "params": cfg.policy_params,
+                   "params_sha256": hashlib.sha256(json.dumps(cfg.policy_params, sort_keys=True, ensure_ascii=False,
+                                                              separators=(",", ":")).encode("utf-8")).hexdigest()},
+        # 시드를 지정하지 않으므로 게임이 makeseed()를 쓴다. 실제 값은 브리지 관측(seed_hi:seed_lo)이 알려 준다.
+        "seed": {"control": "random", "required": False, "requested": None, "actual": None, "source": None},
+        "limits": {"max_frames": cfg.max_frames, "wall_timeout_s": cfg.wall_timeout_s},
+        "mode": cfg.mode,
+        "shot_inverted": cfg.shot_inverted,
+        "shot_inverted_source": "forced" if cfg.shot_inverted is not None else "unknown",
+        "game_args": cfg.game_args(),
+    }
+
+
+def _final_block(result: EpisodeResult) -> dict | None:
+    """끝에 읽은 상태. 스키마상 gameover는 enum이라 값이 없으면 키를 생략한다(null을 쓰지 않는다)."""
+    state = result.last_state if isinstance(result.last_state, dict) else None
+    block: dict = {"last_frame": state_frame(state)}
+    gameover = state.get("gameover") if state else None
+    if isinstance(gameover, str):
+        block["gameover"] = gameover
+    return block
 
 
 def _elapsed_s(result: EpisodeResult):
@@ -190,7 +205,7 @@ def run(argv: list[str]) -> int:
 
     manifest: dict = {
         "schema": RUN_SCHEMA, "run_id": run_id, "experiment_id": cfg.experiment_id, "finished": False,
-        "command": argv, "config": _config_dict(cfg), "started_at": started_at, "ended_at": None,
+        "command": argv, "args": _config_dict(cfg), "config": config_block(cfg), "started_at": started_at, "ended_at": None,
         "exit_code": None, "code": code, "site": str(site),
         "host": {"platform": platform.platform(), "python": platform.python_version()},
         "browser": {"executable": executable, "headless": cfg.headless, "version": None},

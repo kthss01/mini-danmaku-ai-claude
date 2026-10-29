@@ -90,11 +90,14 @@ class FinishIsolationTests(unittest.TestCase):
         self.assertEqual(browser.close_calls, 1)
 
     def test_artifact_write_failure_is_recorded_not_raised(self):
-        # episodes/0001이 파일이면 하위 파일을 만들 수 없다(OSError).
+        # 저장 경로가 디렉터리면 파일을 열 수 없다(OSError). trace와 일반 artifact 두 경로 모두 확인한다.
+        (self.run_dir.episodes / "0001.trace.jsonl").mkdir()
         (self.run_dir.episodes / "0001").write_text("not a directory", encoding="utf-8")
-        event = {"type": "artifact", "name": "trace.jsonl", "encoding": "utf8", "data": "x"}
-        self.driver._save_artifact(event, 1, self.result)
-        self.assertTrue(any("trace.jsonl 저장 실패" in e for e in self.result.evidence_errors))
+        for name in ("trace.jsonl", "other.bin"):
+            event = {"type": "artifact", "name": name, "encoding": "utf8", "data": "x"}
+            self.driver._save_artifact(event, 1, self.result)
+            self.assertTrue(any(f"{name} 저장 실패" in e for e in self.result.evidence_errors), name)
+        self.assertNotIn("trace", self.result.evidence)
         self.assertEqual(self.result.artifacts, [])
 
     def test_release_check_failure_is_unknown_not_released(self):

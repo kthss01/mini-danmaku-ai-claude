@@ -302,9 +302,13 @@ class EpisodeDriver:
         except (ValueError, TypeError):
             self.logger.log(f"artifact {name} 디코딩 실패", "WARN")
             return
-        rel = f"episodes/{index:04d}/{name}"
+        # 평가 스키마(evidence.trace·replay)의 기본 경로에 맞춰 trace·리플레이는 episodes/NNNN.<종류> 로 저장한다.
+        special = {"trace.jsonl": ("trace", f"episodes/{index:04d}.trace.jsonl"),
+                   "replay.tsr": ("replay", f"episodes/{index:04d}.replay.tsr")}
+        kind, rel = special.get(name, (None, f"episodes/{index:04d}/{name}"))
         try:
-            target = self.run_dir.episode_extra_dir(index) / name
+            target = self.run_dir.path / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "ab") as handle:
                 handle.write(payload)
         except OSError as exc:
@@ -312,6 +316,8 @@ class EpisodeDriver:
             result.evidence_errors.append(f"artifact {name} 저장 실패: {exc!r}")
             self.logger.log(f"episode {index}: artifact {name} 저장 실패: {exc!r}", "WARN")
             return
+        if kind is not None:
+            result.evidence[kind] = rel
         if rel not in result.artifacts:
             result.artifacts.append(rel)
 
