@@ -178,4 +178,27 @@ Cirno 교체에 필요한 것:
 5. 색 팔레트: 위 그림에서 쓴 대표색 5개를 HEX로(민트 메인, 크림, 남색, 갈색, 강조색 1).
 ```
 
-요청서에 캐릭터 이름을 넣고 싶으면 8절의 정식 이름을 먼저 정한다.
+요청서에 캐릭터 이름을 넣고 싶으면 8절의 정식 이름을 먼저 정한다. 2026-10-29 결정으로 첫 시험은 임시 이름 `MINIVELO`를 그대로 쓴다.
+
+## 10. 진행 상황 (2026-10-30)
+
+| 단계 | 상태 |
+| --- | --- |
+| 추적 이슈 | #44 생성. 임시 이름 `MINIVELO`로 진행하기로 기록 |
+| 문자열·색 (fork `feat/theme-minivelo`, `7854b7e1`) | 표시 이름·칭호(`Folding Bike Trickster`)·스테이지 1 보스 전후 대사 3루트·글로우/그림자 색(민트)·미디어룸 프로필을 바꿨고 `po/ko.po`에 한국어 24건을 추가했다. 그림·아틀라스·`.ani`·패턴·판정은 그대로다 |
+| 이미지 준비 도구 (메인 `scripts/theme/theme_assets.py`) | `check-frames`·`split-sheet`·`check-portraits`·`make-faces`. 기존 Cirno 자산으로 왕복 검증: 12프레임 시트 분할 결과가 원본과 동일, 합성한 표정 전신에서 패치 248×234와 padding(5.5/355/8/194)을 그대로 재현 |
+| 웹 빌드 | Taisei `7854b7e1`, 5분 6초, 정적 검사 통과(리소스 540개). `taisei.wasm`에 새 문자열이 있고 옛 문자열(`Thermodynamic Ice Fairy` 등)은 없음. 한국어 `.mo`(data `53a5ae1e…`)에 `미니벨로`·`접이식 자전거 장난꾸러기`·`따르릉` 포함 |
+| 미확인 | 실제 화면(대화·HUD 이름·스펠 컷인·미디어룸 프로필·한국어 표시)은 세션 패널이 열려 있지 않아 게임을 제 속도로 돌릴 수 없어 확인하지 못했다. 로컬 서버(`http://127.0.0.1:8112/`, 세션이 살아 있는 동안) 또는 머지 뒤 공개 주소에서 사람이 Story 모드 스테이지 1 보스 전까지 플레이해 확인한다. 미디어룸 프로필은 스테이지 1 보스 BGM 해금 뒤에 보인다 |
+
+이미지가 오면 쓰는 명령(저장소 루트, Pillow 필요):
+
+```powershell
+python scripts\theme\theme_assets.py split-sheet sheet.png --cols 6 --rows 2 --name cirno --out-dir game\taisei\atlas\common\boss
+python scripts\theme\theme_assets.py check-frames game\taisei\atlas\common\boss\cirno.frame*.png --expect-count 12
+python scripts\theme\theme_assets.py check-portraits normal.png angry.png sad.png defeated.png
+python scripts\theme\theme_assets.py make-faces --base normal.png --face normal=normal.png --face angry=angry.png --variant defeated=defeated.png --name cirno --out-dir game\taisei\atlas\portraits\dialog --config-dir game\taisei\atlas\config\dialog
+```
+
+`make-faces`는 기본 초상화와 달라진 영역의 합집합을 모든 표정 패치에 같은 크기로 쓰고, 변형(`defeated`)은 전신을 저장한 뒤 같은 영역을 잘라 `defeated` 패치로 둔다. 이후 `gen-atlas.py`로 `common`·`portraits`를 재생성하고(3절), `.ani` 프레임 수를 맞춘 뒤 다시 빌드한다.
+
+작업 위치 참고: 메인 저장소의 git worktree에서는 `game/taisei`의 gitdir이 워크트리 밖을 가리켜 빌드 컨테이너가 clone하지 못한다(`fatal: not a git repository`). `game/taisei/.git`을 실제 디렉터리로 옮기고 `core.worktree`를 지워 독립 저장소로 만들면 빌드된다.
