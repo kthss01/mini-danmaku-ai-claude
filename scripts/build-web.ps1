@@ -304,6 +304,38 @@ if ($webShellPresent) {
     Write-Host 'web/ not found; packaging the upstream game shell only.'
 }
 
+# AI 브리지 어댑터와 정책 번들(ai/)을 site/game/ai/ 아래에 둔다. 세션 5 호스트 API(web/game/ai-host.js)가 가정하는 위치다:
+#   ai/bridge/taisei-ai-bridge.mjs -> site/game/ai/bridge/    ai/policies/** -> site/game/ai/policies/**
+# 파일이 없는 브랜치(ai/ 도입 전)에서는 건너뛰고 build-info.json에 packaging.aiPackaged=false로 남긴다.
+$aiSourceDir = Join-Path $repoRoot 'ai'
+$aiBridgeSource = Join-Path $aiSourceDir 'bridge/taisei-ai-bridge.mjs'
+$aiPackaged = Test-Path -LiteralPath $aiBridgeSource
+$aiHashes = [ordered]@{}
+$aiDirty = @()
+if ($aiPackaged) {
+    $aiTarget = Join-Path $siteGamePath 'ai'
+    $aiBridgeTarget = Join-Path $aiTarget 'bridge'
+    New-Item -ItemType Directory -Force -Path $aiBridgeTarget | Out-Null
+    Copy-Item -LiteralPath $aiBridgeSource -Destination $aiBridgeTarget -Force
+    $aiPoliciesSource = Join-Path $aiSourceDir 'policies'
+    if (Test-Path -LiteralPath $aiPoliciesSource) {
+        # 실행에 필요한 모듈·설정만 복사한다(README·테스트 제외).
+        foreach ($file in @(Get-ChildItem -LiteralPath $aiPoliciesSource -Recurse -File | Where-Object { $_.Extension -in '.js', '.mjs', '.json' })) {
+            $relative = $file.FullName.Substring($aiPoliciesSource.Length + 1)
+            $destination = Join-Path (Join-Path $aiTarget 'policies') $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+        }
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $aiTarget -Recurse -File | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($aiTarget.Length + 1).Replace('\', '/')
+        $aiHashes[$relative] = Get-Sha256 $file.FullName
+    }
+    $aiDirty = Get-GitDirtyEntries $repoRoot @('ai')
+} else {
+    Write-Host 'ai/bridge/taisei-ai-bridge.mjs not found; skipping AI bridge and policy packaging.'
+}
+
 # 라이선스 고지는 현재 작업 트리가 아니라 해당 빌드의 install에 포함된 COPYING.txt를 사용한다.
 $buildLicense = Join-Path $installPath 'COPYING.txt'
 Copy-Item -LiteralPath $buildLicense -Destination (Join-Path $sitePath 'COPYING.txt') -Force
@@ -350,6 +382,9 @@ $info = [ordered]@{
         webShellPresent        = $webShellPresent
         webShellDirtyEntries   = $webShellDirty
         webShellSha256         = $shellHashes
+        aiPackaged             = $aiPackaged
+        aiDirtyEntries         = $aiDirty
+        aiSha256               = $aiHashes
     }
     site      = [ordered]@{
         entry                        = $entry

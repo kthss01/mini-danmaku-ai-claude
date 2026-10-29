@@ -92,6 +92,9 @@ def inspect_site(cfg: RunConfig, site: Path) -> dict:
         "build_taisei_dirty_entries": build.get("taiseiWorktreeDirtyEntries"),
         "packaging_dirty_entries": (info.get("packaging") or {}).get("repositoryDirtyEntries"),
         "web_shell_dirty_entries": (info.get("packaging") or {}).get("webShellDirtyEntries"),
+        # ai/(브리지 어댑터·정책)를 패키징한 빌드만 확인 대상이다. 패키징하지 않았거나 기록이 없는 이전 빌드는 None이 아니라 키를 뺀다.
+        "ai_dirty_entries": (info.get("packaging") or {}).get("aiDirtyEntries"),
+        "ai_packaged": bool((info.get("packaging") or {}).get("aiPackaged")),
     }
 
 
@@ -113,6 +116,8 @@ def code_block(site_facts: dict, main_commit: str | None, dirty: list[str] | Non
         "packaging_repository": site_facts["packaging_dirty_entries"],
         "web_shell": site_facts["web_shell_dirty_entries"],
     }
+    if site_facts.get("ai_packaged"):
+        sources["packaged_ai_files"] = site_facts.get("ai_dirty_entries")
     return {
         "main_commit": main_commit,
         "dirty": aggregate_dirty(sources),
