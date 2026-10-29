@@ -90,7 +90,7 @@ await page.evaluate(() => taiseiAI.disable('host_request')); // 정리: 입력 �
 
 ## 6. 공격 입력과 `shot_inverted` (자동 발사)
 
-웹 빌드의 `CONFIG_SHOT_INVERTED`(`shot_inverted`)를 기본 켜기로 바꾸는 작업이 따로 진행 중이다(웹 비차단 항목, #28). 켜져 있으면 `Z`를 누르지 않을 때 쏘고 누르는 동안 멈춘다.
+웹 빌드는 `CONFIG_SHOT_INVERTED`(`shot_inverted`) 기본값이 1이다(PR #40, fork PR kthss01/taisei#3). 켜져 있으면 `Z`를 누르지 않을 때 쏘고 누르는 동안 멈춘다. 게임 옵션 "기본 공격 상태"(Shoot by default)에서 끌 수 있다.
 
 | 모드 | 의미 |
 | --- | --- |
