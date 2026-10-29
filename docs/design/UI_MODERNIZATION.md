@@ -2,8 +2,8 @@
 
 게임의 스타일(泰西 로고, 붓글씨 난이도, 중력 렌즈 배경, 기존 일러스트)은 그대로 두고, 오래된 느낌을 주던 요소(판타지풍 제목 글꼴, 빽빽한 작은 목록, 장식 없는 검은 띠, 배경과 분리되지 않는 초상화)를 요즘 UI처럼 정리했다. 그림 파일과 게임 규칙·입력·리플레이는 건드리지 않았다.
 
-- fork 브랜치: `kthss01/taisei` `feat/ui-modern-menus` (fork `master` `84b414f7` 기준 — 인트로 건너뛰기·한국어 l10n·자동 발사 머지 이후)
-- 메인 브랜치: `feat/ui-modern-menus` (origin/main `141effc` 기준, gitlink 갱신 + 이 문서)
+- fork 브랜치: `kthss01/taisei` `feat/ui-modern-menus` (fork `master` `84b414f7` 기준 — 인트로 건너뛰기·한국어 l10n·자동 발사 머지 이후). PR kthss01/taisei#5로 master에 머지됨 — 머지 커밋 `e1b6f29a`(AI 브리지 `4d417486` 포함, 파일 겹침 없음)
+- 메인 브랜치: `feat/ui-modern-menus` (origin/main `141effc` 기준으로 작업, 머지 전 `0dd55ec`까지 병합. gitlink `e1b6f29a` + 이 문서)
 - 초상화 교체 절차: [PORTRAITS.md](PORTRAITS.md)
 
 ## 1. 디자인 언어
@@ -83,8 +83,8 @@
 
 | 항목 | 값 |
 | --- | --- |
-| fork 최종 커밋 | `237ee344` (origin/master `84b414f7` 위에 rebase. 본문 `f593e2bc` → font 수정 `11a79be0` → 셰이더 목록 `6fded88e` → 렌즈 구멍 `3abde76f` → 한국어·CJK 글꼴 `237ee344`) |
-| 메인 저장소 기준 | origin/main `141effc` |
+| fork 최종 커밋 | `237ee344` (origin/master `84b414f7` 위에 rebase. 본문 `f593e2bc` → font 수정 `11a79be0` → 셰이더 목록 `6fded88e` → 렌즈 구멍 `3abde76f` → 한국어·CJK 글꼴 `237ee344`). master 머지 커밋 `e1b6f29a` — 머지 뒤 빌드는 메인 PR #47의 GitHub Actions(`pages.yml` pull_request 검사)와 Pages 배포로 확인 |
+| 메인 저장소 기준 | origin/main `141effc`(검증 시점). 머지 전 `0dd55ec`(gitlink `4d417486`)까지 병합 |
 | 빌드 | `build-web.ps1 -Force` 6분 7초, Emscripten 5.0.3 |
 | 정적 검사 | `check-web-assets.py --require-wasm --verify-hashes` 통과 (리소스 543개, 207.3 MiB, `taisei.wasm` 4,544,946바이트) |
 | 확인한 화면 | 메인 메뉴, 난이도(Easy·Normal 전환), 캐릭터 선택 3명 × 샷 A/B, 옵션·미디어 룸·리플레이 제목 스타일, 스테이지 1 진입 — 영어·한국어 각각 |
