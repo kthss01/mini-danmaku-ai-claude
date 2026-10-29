@@ -61,19 +61,19 @@ for (const [label, make] of Object.entries(CASES)) {
 	});
 }
 
-test('fixture 레이저: 충전 중에 레인을 벗어나 활성 구간 동안 피격 없음, 기준선은 맞는다', () => {
+test('fixture 레이저(원본 충전 곡선): 활성 전에 레인을 벗어나 활성 구간 동안 피격 없음, 기준선은 맞는다', () => {
 	const res = runAll('laser', () => sc.verticalLaser());
 	assert.ok(survivedAll(res['avoid-v1']));
 	assert.ok(res.idle.every(r => !r.survived && r.hit.by === 'laser'));
 	assert.ok(res['simple-move'].every(r => !r.survived));
 
-	// 활성 직전(프레임 58)에 이미 레이저 폭 밖에 있어야 한다
+	// 활성 직전(프레임 68)에 이미 레이저 폭 밖에 있어야 한다
 	const scenario = sc.verticalLaser();
 	const policy = avoid.init({}, { now: () => 0 });
 	const sim = new Sim(scenario);
 	let obs = sim.obs();
 
-	while (sim.frame < 58) {
+	while (sim.frame < 68) {
 		const a = policy.decide(obs);
 		sim.step(a.hold);
 		obs = sim.obs();
@@ -82,8 +82,8 @@ test('fixture 레이저: 충전 중에 레인을 벗어나 활성 구간 동안 
 	assert.ok(Math.abs(sim.player.x - 240) > 4, `활성 직전 위치 ${sim.player.x}`);
 });
 
-test('fixture 레이저(활성 시점을 모르는 경우): 충전 중에도 즉시 위험으로 보고 피한다', () => {
-	const res = runAll('laser-unknown', () => sc.verticalLaser({ giveActivateIn: false }), { giveActivateIn: false });
+test('fixture 레이저(폭을 관측에서 알 수 없는 경우): 활성 시점을 모르므로 충전 중에도 위험으로 보고 피한다', () => {
+	const res = runAll('laser-unknown', () => sc.verticalLaser({ hideWidth: true }));
 	assert.ok(survivedAll(res['avoid-v1']));
 });
 

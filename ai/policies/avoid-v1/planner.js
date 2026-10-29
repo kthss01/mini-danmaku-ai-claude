@@ -410,7 +410,7 @@ export class Planner {
 		let bomb = false;
 		const bc = this.cfg.bomb;
 
-		if (bc.enabled && mode === 'doomed' && this.sE[pick] <= bc.trigger_frames && P.bombs > 0 && P.phase === 'normal') {
+		if (bc.enabled && mode === 'doomed' && this.sE[pick] <= bc.trigger_frames && P.bombs > 0 && v.phase === 'normal') {
 			bomb = true;
 		}
 

@@ -35,7 +35,6 @@ export class Sim {
 		this.nextId = 1;
 		this.hit = null;
 		this.f32 = scn.f32 !== false;
-		this.giveActivateIn = scn.giveActivateIn !== false;
 		this.giveMove = scn.giveMove !== false;
 		this.overflow = 0;
 		if (scn.init) {
@@ -80,11 +79,44 @@ export class Sim {
 		return e;
 	}
 
+	// 원본 laser_charge의 폭 변화(lasers/laser.c): 충전 단계 → 확장 단계 → 소멸 단계
+	chargeWidth(l) {
+		const t = this.frame - l.ramp.birth;
+		const { charge, dur, target } = l.ramp;
+
+		if (t < 0) {
+			return 0;
+		}
+		if (t < charge - 10) {
+			return Math.min(2, (2 * t) / Math.min(30, charge - 10));
+		}
+		if (t >= charge - 10 && t < dur - 20) {
+			return Math.min(target, 1.7 + (target / 20) * (t - charge + 10));
+		}
+		if (t >= dur - 20) {
+			return Math.max(0, target - (target / 20) * (t - dur + 20));
+		}
+		return target;
+	}
+
+	laserWidth(l) {
+		return l.ramp ? this.chargeWidth(l) : this.laserSegs(l)[0].wa;
+	}
+
 	laserSegs(l) {
+		if (l.ramp) {
+			const w = this.chargeWidth(l);
+			return [{ a: l.line.a, b: l.line.b, wa: w, wb: w }];
+		}
+
 		return l.update ? l.update(this.frame) : l.segs;
 	}
 
 	laserActive(l) {
+		if (l.ramp) {
+			return this.chargeWidth(l) > l.ramp.target * 0.6;
+		}
+
 		return this.frame >= l.activateAt && (l.endAt === undefined || this.frame < l.endAt);
 	}
 
@@ -157,8 +189,8 @@ export class Sim {
 		this.bullets = this.bullets.filter(b => b.s.x > -OUT && b.s.x < 480 + OUT && b.s.y > -OUT && b.s.y < 560 + OUT);
 	}
 
+	// 계약 `taisei.ai.obs/1`의 JS 어댑터 형태(ai/bridge read()의 반환 객체)를 흉내 낸다
 	obs() {
-		const F = this.f32 ? Float32Array : Array;
 		const mk = n => (this.f32 ? new Float32Array(n) : new Array(n).fill(0));
 		const mkI = n => new Int32Array(n);
 		const bs = this.bullets;
@@ -168,10 +200,10 @@ export class Sim {
 		};
 
 		if (this.giveMove) {
-			for (const k of ['vx', 'vy', 'ax', 'ay', 'retention_re', 'retention_im', 'attr_re', 'attr_im', 'attr_px', 'attr_py', 'attr_exp']) {
+			for (const k of ['vx', 'vy', 'ax', 'ay', 'ret_re', 'ret_im', 'attr_re', 'attr_im', 'attr_x', 'attr_y', 'attr_exp']) {
 				bullets[k] = mk(n);
 			}
-			bullets.nomove = mkI(n);
+			bullets.flags = mkI(n);
 			bullets.age = mkI(n);
 		}
 
@@ -186,64 +218,63 @@ export class Sim {
 			if (this.giveMove) {
 				bullets.vx[i] = b.s.v.x; bullets.vy[i] = b.s.v.y;
 				bullets.ax[i] = b.s.a.x; bullets.ay[i] = b.s.a.y;
-				bullets.retention_re[i] = b.s.r.x; bullets.retention_im[i] = b.s.r.y;
+				bullets.ret_re[i] = b.s.r.x; bullets.ret_im[i] = b.s.r.y;
 				bullets.attr_re[i] = b.s.attr.x; bullets.attr_im[i] = b.s.attr.y;
-				bullets.attr_px[i] = b.s.ap.x; bullets.attr_py[i] = b.s.ap.y;
+				bullets.attr_x[i] = b.s.ap.x; bullets.attr_y[i] = b.s.ap.y;
 				bullets.attr_exp[i] = b.s.exp;
-				bullets.nomove[i] = b.nomove ? 1 : 0;
+				bullets.flags[i] = b.nomove ? 1 : 0;
 				bullets.age[i] = b.age;
 			}
 		}
 
-		const lasers = { n: this.lasers.length, id: mkI(this.lasers.length), active: mkI(this.lasers.length) };
-
-		if (this.giveActivateIn) {
-			lasers.activate_in = mk(this.lasers.length);
-		}
-
+		const nl = this.lasers.length;
+		const lasers = {
+			n: nl, id: mkI(nl), active: mkI(nl), width: mk(nl), seg_start: mkI(nl), seg_count: mkI(nl),
+		};
 		const segArr = [];
 
 		this.lasers.forEach((l, li) => {
 			lasers.id[li] = l.id;
 			lasers.active[li] = this.laserActive(l) ? 1 : 0;
+			lasers.width[li] = this.laserWidth(l);
+			lasers.seg_start[li] = segArr.length;
+			const segs = this.laserSegs(l);
+			lasers.seg_count[li] = segs.length;
 
-			if (this.giveActivateIn) {
-				lasers.activate_in[li] = this.laserActive(l) ? 0 : Math.max(0, l.activateAt - this.frame);
-			}
-
-			for (const s of this.laserSegs(l)) {
-				segArr.push({ li, s });
+			for (const sg of segs) {
+				segArr.push(sg);
 			}
 		});
+
+		if (this.hideLaserWidth || this.scn.hideLaserWidth) {
+			delete lasers.width;
+		}
 
 		const m = segArr.length;
-		const laser_segs = { n: m, laser: mkI(m), ax: mk(m), ay: mk(m), bx: mk(m), by: mk(m), ra: mk(m), rb: mk(m) };
-		segArr.forEach(({ li, s }, i) => {
-			laser_segs.laser[i] = li;
-			laser_segs.ax[i] = s.a.x; laser_segs.ay[i] = s.a.y;
-			laser_segs.bx[i] = s.b.x; laser_segs.by[i] = s.b.y;
-			laser_segs.ra[i] = Math.max(s.wa * 0.5 - 4, 2);
-			laser_segs.rb[i] = Math.max(s.wb * 0.5 - 4, 2);
+		const laser_segs = { n: m, ax: mk(m), ay: mk(m), bx: mk(m), by: mk(m), ra: mk(m), rb: mk(m) };
+		segArr.forEach((sg, i) => {
+			laser_segs.ax[i] = sg.a.x; laser_segs.ay[i] = sg.a.y;
+			laser_segs.bx[i] = sg.b.x; laser_segs.by[i] = sg.b.y;
+			laser_segs.ra[i] = Math.max(sg.wa * 0.5 - 4, 2);
+			laser_segs.rb[i] = Math.max(sg.wb * 0.5 - 4, 2);
 		});
 
-		const en = { n: this.enemies.length, id: mkI(this.enemies.length), x: mk(this.enemies.length), y: mk(this.enemies.length), hurt_radius: mk(this.enemies.length) };
+		const ne = this.enemies.length;
+		const en = { n: ne, id: mkI(ne), x: mk(ne), y: mk(ne), hurt_radius: mk(ne) };
 		this.enemies.forEach((e, i) => {
 			en.id[i] = e.id; en.x[i] = e.x; en.y[i] = e.y; en.hurt_radius[i] = e.hurt_radius;
 		});
 
-		void F;
 		const pl = this.player;
 		return {
-			schema: 'taisei.ai.obs/0',
-			frame: this.frame,
-			episode_id: 1,
-			meta: { overflow: this.overflow },
+			meta: { schema_ver: 1, frame: this.frame, episode_id: 1, overflow: this.overflow },
 			player: {
 				x: pl.x, y: pl.y, vx: pl.vx, vy: pl.vy,
 				speed_normal: pl.speedN, speed_focus: pl.speedF,
-				bombs: pl.bombs, lives: pl.lives, phase: 'normal',
+				bombs: pl.bombs, lives: pl.lives, phase: 0,
 				deathtime: -1, respawntime: 0, recoverytime: 0, bomb_endtime: 0,
 			},
+			boss: { present: 0, x: 0, y: 0 },
 			bullets, lasers, laser_segs, enemies: en,
 		};
 	}

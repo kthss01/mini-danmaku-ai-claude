@@ -36,12 +36,13 @@ test('번들 형식: meta·init·정책 메서드를 내보낸다', () => {
 
 		const a = p.decide(makeObs());
 		assert.equal(typeof a.hold, 'number');
-		assert.ok(a.bomb === 0 || a.bomb === 1);
-		assert.equal(a.special, 0);
+		assert.ok(a.edges === 0 || a.edges === 1, 'edges는 BOMB=1, SPECIAL=2 비트');
 		assert.ok('request' in a && 'meta' in a);
 	}
 
-	assert.deepEqual(avoid.meta.obs_schema, ['taisei.ai.obs/0']);
+	assert.deepEqual(avoid.meta.obs_schema, ['taisei.ai.obs/1']);
+	assert.equal(avoid.meta.act_schema, 'taisei.ai.act/1');
+	assert.equal(avoid.EDGE.BOMB, 1);
 	assert.equal(avoid.HOLD.SHOT, 32);
 });
 
@@ -86,13 +87,14 @@ test('위협이 없으면 정지하고(진동 없음) 위협이 있으면 피한
 test('관측 오류: 입력 해제(release) 요청으로 중단하고 던지지 않는다', () => {
 	const bad = [
 		undefined, null, 5, {},
-		{ ...makeObs(), schema: 'taisei.ai.obs/9' },
-		{ ...makeObs(), frame: -1 },
-		{ ...makeObs(), frame: 1.5 },
+		{ ...makeObs(), meta: undefined },
+		{ ...makeObs(), meta: { ...makeObs().meta, schema_ver: 9 } },
+		{ ...makeObs(), meta: { ...makeObs().meta, frame: -1 } },
+		{ ...makeObs(), meta: { ...makeObs().meta, frame: 1.5 } },
+		(() => { const o = makeObs(); o.player.phase = 9; return o; })(),
 		(() => { const o = makeObs(); o.player.x = NaN; return o; })(),
 		(() => { const o = makeObs(); o.player.speed_normal = 0; return o; })(),
-		(() => { const o = makeObs(); o.player.phase = 'weird'; return o; })(),
-		(() => { const o = makeObs({ bullets: [{ x: 1, y: 1 }] }); o.bullets.x[0] = Infinity; return o; })(),
+				(() => { const o = makeObs({ bullets: [{ x: 1, y: 1 }] }); o.bullets.x[0] = Infinity; return o; })(),
 		(() => { const o = makeObs({ bullets: [{ x: 1, y: 1 }] }); delete o.bullets.wx; return o; })(),
 		(() => { const o = makeObs(); o.bullets.n = -3; return o; })(),
 		(() => { const o = makeObs(); o.player.x = 9999; return o; })(),
@@ -134,7 +136,7 @@ test('에피소드가 바뀌거나 프레임이 되감기면 내부 상태를 �
 	}
 
 	const o = threatObs(1);
-	o.episode_id = 2;
+	o.meta.episode_id = 2;
 	const a = p.decide(o);
 	assert.equal(a.request, null);
 	const rewound = p.decide(threatObs(1, {}));
@@ -152,7 +154,7 @@ test('결정성: 같은 관측열과 초기 상태이면 같은 출력', () => {
 				frame: f, player: { x: 240, y: 480 },
 				bullets: [{ x, y: 380 + f, vx: 0, vy: 4, size: [12, 12] }, { x: 200, y: 300 + 3 * f, vx: 0.5, vy: 3, size: [10, 10] }],
 			}));
-			out.push([a.hold, a.bomb, a.meta.mode, a.meta.choice, a.meta.s_exact, a.meta.s_margin].join(','));
+			out.push([a.hold, a.edges, a.meta.mode, a.meta.choice, a.meta.s_exact, a.meta.s_margin].join(','));
 		}
 
 		return out;
@@ -178,15 +180,15 @@ test('사망 처리 중(dead)·데스봄 유예(hit_pending)에는 회피 계산
 	assert.equal(dead.request, null);
 	const pend = p.decide(threatObs(2, { player: { phase: 'hit_pending', bombs: 2 } }));
 	assert.equal(pend.meta.mode, 'dead_wait');
-	assert.equal(pend.bomb, 0, '데스봄은 기본 꺼짐');
+	assert.equal(pend.edges, 0, '데스봄은 기본 꺼짐');
 });
 
 test('데스봄 옵션: hit_pending에서 봄을 한 번 쓰고 기록한다', () => {
 	const p = mk({ bomb: { enabled: true, deathbomb: true } });
 	const a = p.decide(threatObs(1, { player: { phase: 'hit_pending', bombs: 2 } }));
-	assert.equal(a.bomb, 1);
+	assert.equal(a.edges, avoid.EDGE.BOMB);
 	const b = p.decide(threatObs(2, { player: { phase: 'hit_pending', bombs: 2 } }));
-	assert.equal(b.bomb, 0, '에피소드당 최대 횟수 제한');
+	assert.equal(b.edges, 0, '에피소드당 최대 횟수 제한');
 	const s = p.stats();
 	assert.equal(s.bombs.length, 1);
 	assert.equal(s.bombs[0].kind, 'deathbomb');
@@ -208,19 +210,19 @@ test('봄: 기본은 쓰지 않고, 켜면 확정 피격이 임박할 때 한 �
 	const off = mk();
 	const a = off.decide(ringObs(1));
 	assert.equal(a.meta.plan_mode, 'doomed');
-	assert.equal(a.bomb, 0);
+	assert.equal(a.edges, 0);
 	assert.equal(off.stats().bombs.length, 0);
 
 	const on = mk({ bomb: { enabled: true } });
 	const b = on.decide(ringObs(1));
-	assert.equal(b.bomb, 1);
+	assert.equal(b.edges, avoid.EDGE.BOMB);
 	const rec = on.stats().bombs[0];
 	assert.equal(rec.kind, 'policy');
 	assert.equal(rec.frame, 1);
 	assert.ok(rec.predicted_hit_frame >= 1 && rec.predicted_hit_frame <= 9);
 	// 봄이 없으면 쓰지 않는다
 	const none = mk({ bomb: { enabled: true } });
-	assert.equal(none.decide(ringObs(1, { player: { bombs: 0 } })).bomb, 0);
+	assert.equal(none.decide(ringObs(1, { player: { bombs: 0 } })).edges, 0);
 });
 
 test('무적 구간(recovering)의 피격은 점수에 넣지 않고, 종료 뒤의 피격만 본다', () => {
@@ -356,4 +358,29 @@ test('퍼징: 무작위로 망가진 관측에도 예외를 던지지 않는다'
 			assert.equal(typeof a.hold, 'number');
 		}, `사례 ${i} (${k})`);
 	}
+});
+
+test('frame-handler: 정상 action은 제출하고 release는 입력 해제, suspend는 브리지 정지까지 요청한다', async () => {
+	const { createFrameHandler } = await import('../../ai/policies/frame-handler.js');
+	const submitted = [];
+	const suspended = [];
+	const ctl = { submit: a => submitted.push(a) };
+	const bridge = { suspend: r => suspended.push(r) };
+	const decisions = [];
+	const p = mk({ deadline_suspend_after: 2 }, fakeClock(100));
+	const handler = createFrameHandler(p, { bridge, now: () => 0, onDecision: (a, ms) => decisions.push([a.meta.mode, ms]) });
+
+	// 시계가 느려 예산을 넘기고 안전 후보가 없다 → release, 다음 번에 suspend
+	handler(threatObs(1), ctl);
+	handler(threatObs(2), ctl);
+	assert.deepEqual(submitted, [{ hold: 0, edges: 0 }, { hold: 0, edges: 0 }]);
+	assert.deepEqual(suspended, ['policy_deadline']);
+	assert.equal(decisions.length, 2);
+
+	// 정상 정책
+	const ok = createFrameHandler(mk(), { bridge, now: () => 0 });
+	const out = [];
+	ok(makeObs({ frame: 1, player: { x: 240, y: 460 } }), { submit: a => out.push(a) });
+	assert.equal(out[0].hold, HOLD.SHOT);
+	assert.equal(out[0].edges, 0);
 });

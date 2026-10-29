@@ -2,19 +2,19 @@
 // 정책 번들 형식은 docs/ai/POLICY.md, 이슈 #22의 Q5 답변(`taisei.ai.policy/0`)을 따른다.
 // 이 모듈은 DOM·Node API·네트워크·Math.random·Date를 쓰지 않는다. 시간은 host.now()로만 읽는다.
 
-import { HOLD, resolveConfig } from './config.js';
-import { validateObs, SUPPORTED_OBS_SCHEMAS } from './input.js';
+import { HOLD, EDGE, resolveConfig } from './config.js';
+import { validateObs, OBS_SCHEMA_NAME } from './input.js';
 import { Scene } from './scene.js';
 import { Planner, candHoldBits, candName } from './planner.js';
 
-export { HOLD };
+export { HOLD, EDGE };
 
 export const meta = Object.freeze({
 	schema: 'taisei.ai.policy/0',
 	id: 'avoid-v1',
 	version: '0.1.0',
-	obs_schema: SUPPORTED_OBS_SCHEMAS,
-	act_schema: 'taisei.ai.act/0',
+	obs_schema: [OBS_SCHEMA_NAME],
+	act_schema: 'taisei.ai.act/1',
 });
 
 const FRAME_BUDGET_MS = 1000 / 60;
@@ -26,6 +26,10 @@ function percentile(sorted, p) {
 	}
 	const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
 	return sorted[idx];
+}
+
+function frameOf(obs) {
+	return obs && obs.meta && Number.isInteger(obs.meta.frame) ? obs.meta.frame : -1;
 }
 
 export function init(config, host) {
@@ -102,8 +106,7 @@ export function init(config, host) {
 		record(ms, 'halt', frame, { reason });
 		return {
 			hold: 0,
-			bomb: 0,
-			special: 0,
+			edges: 0,
 			request,
 			meta: { mode: 'halt', frame, reason, detail, safe_verified: false, decision_ms: ms, over_budget: ms > cfg.budget_ms },
 		};
@@ -113,8 +116,7 @@ export function init(config, host) {
 		record(ms, mode, frame, extra);
 		return {
 			hold: cfg.shoot ? HOLD.SHOT : 0,
-			bomb: bomb ? 1 : 0,
-			special: 0,
+			edges: bomb ? EDGE.BOMB : 0,
 			request: null,
 			meta: { mode, frame, safe_verified: false, decision_ms: ms, over_budget: ms > cfg.budget_ms },
 		};
@@ -125,7 +127,7 @@ export function init(config, host) {
 			const t0 = now();
 
 			if (disposed) {
-				return makeHalt(obs && Number.isInteger(obs.frame) ? obs.frame : -1, 'disposed', 0);
+				return makeHalt(frameOf(obs), 'disposed', 0);
 			}
 
 			const v = validateObs(obs);
@@ -133,7 +135,7 @@ export function init(config, host) {
 			if (!v.ok) {
 				resetState();
 				lastFrame = -1;
-				return makeHalt(obs && Number.isInteger(obs.frame) ? obs.frame : -1, 'observation_invalid', now() - t0, v.detail ? `${v.reason}: ${v.detail}` : v.reason);
+				return makeHalt(frameOf(obs), 'observation_invalid', now() - t0, v.detail ? `${v.reason}: ${v.detail}` : v.reason);
 			}
 
 			const frame = v.frame;
@@ -158,12 +160,12 @@ export function init(config, host) {
 			const P = v.player;
 
 			// 사망 처리 중·데스봄 유예: 움직일 수 없으므로 회피 계산을 쉰다
-			if (P.phase === 'dead') {
+			if (v.phase === 'dead') {
 				consecutiveHalts = 0;
 				return neutral(frame, 'dead_wait', false, now() - t0);
 			}
 
-			if (P.phase === 'hit_pending') {
+			if (v.phase === 'hit_pending') {
 				consecutiveHalts = 0;
 				const bc = cfg.bomb;
 
@@ -220,8 +222,7 @@ export function init(config, host) {
 
 			return {
 				hold: candHoldBits(r.c, HOLD) | (cfg.shoot ? HOLD.SHOT : 0),
-				bomb,
-				special: 0,
+				edges: bomb ? EDGE.BOMB : 0,
 				request: null,
 				meta: {
 					mode,

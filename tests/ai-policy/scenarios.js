@@ -43,16 +43,18 @@ export function crossing(seed = 2) {
 	};
 }
 
-// 플레이어 아래쪽 열에 긴 세로 레이저가 충전된 뒤 켜진다
-export function verticalLaser({ x = 240, activateAt = 60, endAt = 200, width = 16, giveActivateIn = true } = {}) {
+// 플레이어 아래쪽 열에 긴 세로 레이저가 충전된 뒤 켜진다. 폭은 원본 laser_charge를 따른다:
+// 충전 단계(폭 ≤ 2) → 확장 단계(폭이 직선 증가) → 폭 > 목표 폭 × 0.6부터 충돌 활성.
+// hideWidth: 관측에서 레이저 폭을 숨겨 활성 시점을 전혀 추정할 수 없게 한다.
+export function verticalLaser({ x = 240, charge = 70, dur = 220, target = 24, hideWidth = false } = {}) {
 	return {
-		name: giveActivateIn ? 'laser' : 'laser-unknown-charge',
+		name: hideWidth ? 'laser-unknown-charge' : 'laser',
 		player: { x, y: 496 },
-		giveActivateIn,
+		hideLaserWidth: hideWidth,
 		init(sim) {
 			sim.addLaser({
-				segs: [{ a: { x, y: 0 }, b: { x, y: 560 }, wa: width, wb: width }],
-				activateAt, endAt,
+				ramp: { birth: 0, charge, dur, target },
+				line: { a: { x, y: 0 }, b: { x, y: 560 } },
 			});
 		},
 	};
@@ -221,7 +223,7 @@ export const ALL = {
 	rain: () => rain(),
 	crossing: () => crossing(),
 	laser: () => verticalLaser(),
-	'laser-unknown-charge': () => verticalLaser({ giveActivateIn: false }),
+	'laser-unknown-charge': () => verticalLaser({ hideWidth: true }),
 	corner: () => corner(),
 	'fast-cross': () => fastCross(),
 	accelerating: () => accelerating(),

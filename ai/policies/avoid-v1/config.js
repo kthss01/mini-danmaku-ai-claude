@@ -1,8 +1,9 @@
 // 정책 설정 기본값과 검증. 병합된 최종 값은 policy.describe().config로 노출돼
 // 평가(#23)의 params_sha256 대상이 된다.
 
-// 액션 hold 비트. #21 계약 v1의 비트 정의가 나오면 이 값만 맞춘다(가정: v0.2 표의 나열 순서).
-export const HOLD = Object.freeze({ UP: 1, DOWN: 2, LEFT: 4, RIGHT: 8, FOCUS: 16, SHOT: 32 });
+// 액션 비트. 계약 `taisei.ai.act/1`(docs/ai/CONTRACT.md 6.1절)과 같다.
+export const HOLD = Object.freeze({ UP: 1, DOWN: 2, LEFT: 4, RIGHT: 8, FOCUS: 16, SHOT: 32, SKIP: 64 });
+export const EDGE = Object.freeze({ BOMB: 1, SPECIAL: 2 });
 
 export const DEFAULT_CONFIG = Object.freeze({
 	horizon: 30,            // 예측 프레임 수(0.5초)

@@ -1,0 +1,252 @@
+# 충돌 예측·자동 회피 기준선 정책 (`avoid-v1`)
+
+담당 이슈: [#22](https://github.com/kthss01/mini-danmaku-ai-claude/issues/22) · 부모: [#19](https://github.com/kthss01/mini-danmaku-ai-claude/issues/19)
+계약 기준: [CONTRACT.md](CONTRACT.md) (`taisei.ai.obs/1`, `taisei.ai.act/1`, PR #39) · 설계 이력: #22 댓글 v0, v0.1, 추가 규칙
+
+이 문서는 정책 번들 형식, 정책이 하는 일, 검증 범위를 적는다. **fixture(합성 탄막) 결과와 실제 게임 결과는 항상 따로 적는다.** 이 문서가 쓰이는 시점에는 실제 게임 연결이 끝나지 않았으므로 실제 게임 결과 절은 비어 있다(7절).
+
+## 1. 범위
+
+- 매 프레임 LLM API를 호출하지 않는다. 정책은 관측 → 행동을 계산하는 결정적인 로컬 JS 함수다.
+- 게임 규칙을 바꾸지 않는다. 정책은 입력 비트(이동·저속·공격·봄)만 낸다. 무적·피격 무시·속도 변경 수단이 없다.
+- 담당 파일: `ai/policies/**`, `tests/ai-policy/**`, 이 문서. fork·브리지·빌드·웹 셸은 고치지 않는다.
+
+| 경로 | 내용 |
+| --- | --- |
+| `ai/policies/avoid-v1/` | 회피 정책 본체 (`index.js` 진입점, `input.js` 관측 해석, `scene.js` 위험 전개·판정, `planner.js` 후보 평가, `geometry.js` 원본 판정식, `config.js` 설정) |
+| `ai/policies/idle/`, `ai/policies/simple-move/` | 비교용 기준선. 같은 번들 형식. 탄을 보지 않는다 |
+| `ai/policies/frame-handler.js` | 정책 → `bridge.onFrame((obs, ctl) => …)` 연결 도우미 |
+| `tests/ai-policy/` | `node --test` 테스트, 원본 직역 기준(`oracle.js`), 합성 시뮬레이터(`sim.js`), 시나리오, `report.mjs` |
+
+## 2. 정책 번들 형식 `taisei.ai.policy/0`
+
+이슈 #22 Q5 답변을 계약 v1에 맞춰 확정한 것이다(`edges`, 비트 이름, 관측 형태가 v1 기준).
+
+- 번들은 디렉터리 하나, 진입점은 `ai/policies/<id>/index.js` (ES 모듈)다. 같은 디렉터리의 상대 `import`만 쓰고 번들러·외부 의존이 없다. DOM·Node API·네트워크·`Math.random`·`Date`를 쓰지 않으며 시간은 `host.now()`로만 읽는다.
+- 불러오기: 호스트가 `ai/policies/`를 정적 파일로 서빙(사이트 `ai/policies/…`로 복사 또는 서버 매핑, 방식은 세션 1·5 결정)하고 `await import(url)`한다. `ai/policies/package.json`의 `"type": "module"`은 Node 테스트용이다.
+- `<id>`가 실행기의 `--policy ID`다. 평가(#23)의 `policy.name`과 같은 문자열(`idle`, `simple-move`, `avoid-v1`)을 쓴다.
+
+```js
+export const meta = { schema: 'taisei.ai.policy/0', id, version, obs_schema: ['taisei.ai.obs/1'], act_schema: 'taisei.ai.act/1' };
+export const HOLD = { UP: 1, DOWN: 2, LEFT: 4, RIGHT: 8, FOCUS: 16, SHOT: 32, SKIP: 64 };
+export const EDGE = { BOMB: 1, SPECIAL: 2 };
+export function init(config, host) { /* → policy */ }      // host = { now?: () => ms }
+// policy:
+//   decide(obs)    → action   논리 프레임당 1회. 동기. 예외를 던지지 않음(관측 오류·예산 초과도 반환값으로 알림)
+//   reset(reason)  에피소드 경계(episode_id 변경은 정책이 스스로 감지)·ai_resume·정지 때 내부 상태 초기화
+//   dispose()      이후 decide는 halt('disposed')
+//   stats()        JSON 직렬화 가능한 누적 카운터
+//   describe()     { id, version, config }  병합된 실제 설정 (params_sha256은 실행기가 이 JSON으로 계산)
+//   trace()        config.trace > 0일 때 최근 N프레임의 결정 요약(피격 전 원인 분석용)
+```
+
+- `init`은 잘못된 `config`(범위 밖 값, 알 수 없는 키, 타입 불일치)에만 예외를 던진다.
+- `decide`가 예외를 던지면 정책 버그다. 어댑터가 `disable('policy_error')`로 처리한다(CONTRACT 6.3절).
+
+### action
+
+```js
+{ hold: <HOLD 비트>, edges: <EDGE 비트>,
+  request: null | { type: 'release' | 'suspend', reason: string },
+  meta: { mode, plan_mode, frame, safe_verified, choice, s_exact, s_margin, complete, relevant, decision_ms, over_budget, … } }
+```
+
+- `hold`/`edges`는 계약 `taisei.ai.act/1`의 `submit({ hold, edges })`에 그대로 넣는다. `target_frame`·`episode_id`는 어댑터(`ctl.submit`)가 채운다.
+- `hold.SHOT`은 `config.shoot`(기본 true)일 때 매 프레임 요청한다. 계약 v1에서 AI의 `SHOT`은 `shot_inverted` 설정과 무관하게 항상 "공격 중"이다(CONTRACT 6.1절).
+- `request.type === 'release'`: 이번 프레임 입력을 모두 해제한다(`hold=0`, `edges=0`). 소유권은 그대로다. **생존 보장이 아니라 제어 중단**이며 `meta.mode='halt'`로 기록되고 `meta.safe_verified=false`다. 생존 지표와 분리해 보고한다.
+- `request.type === 'suspend'`: `policy_deadline`으로 판단 중단이 `config.deadline_suspend_after`회(기본 10) 이어졌을 때다. 호스트는 `bridge.suspend('policy_deadline')`을 부른다.
+- `meta.mode`
+  - `normal`: 확인을 마친 안전한 행동을 골랐다. `meta.safe_verified=true`
+  - `reuse`: 시간이 모자라 이전 계획의 다음 단계만 현재 관측으로 다시 확인해 이어갔다
+  - `conservative`: `overflow ≠ 0`이거나 위험 목록이 잘린 불완전 관측 프레임. 안전 판단을 주장하지 않는다(CONTRACT 5절). 평가는 이 구간을 따로 센다(#23)
+  - `risky`: 모든 후보가 여유 구간(안전 여유)을 침범하지만 확정 피격은 피하는 행동을 골랐다
+  - `doomed`: 모든 후보가 확정 피격으로 예측된다. 가장 늦게 맞는 쪽을 고른다. 봄 규칙은 이 모드에서만 본다
+  - `dead_wait`: 사망 처리 중(`dead`)·데스봄 유예(`hit_pending`)라 움직일 수 없어 회피 계산을 쉰다
+  - `halt`: 입력 해제 요청(관측 오류, 프레임 건너뜀, 예산 초과, dispose)
+
+호스트 연결은 `createFrameHandler(policy, { bridge })`가 해 준다.
+
+```js
+const policy = (await import('/ai/policies/avoid-v1/index.js')).init({}, { now: () => performance.now() });
+bridge.onFrame(createFrameHandler(policy, { bridge }));
+```
+
+## 3. 관측 입력 (`taisei.ai.obs/1`)
+
+어댑터 `read()`가 돌려주는 객체를 그대로 받는다(`ai/policies/avoid-v1/input.js`가 검증·해석). 계약이 바뀌면 이 파일만 고친다.
+
+| 그룹 | 쓰는 필드 | 비고 |
+| --- | --- | --- |
+| `meta` | `schema_ver`(=1), `frame`, `episode_id`, `overflow` | `episode_id`가 바뀌거나 `frame`이 되감기면 내부 상태 초기화 |
+| `player` | `x`, `y`, `speed_normal`, `speed_focus`, `phase`, `bombs`, `deathtime`, `respawntime`, `recoverytime`, `bomb_endtime` | 판정은 점이다(`p_hit_radius = 0`). 속도는 관측값을 쓴다(캐릭터별) |
+| `boss` | `present`, `x` | 있으면 공격 정렬 선호의 x 기준 |
+| `bullets` | `x y px py wx wy angle` + `vx vy ax ay ret_re ret_im attr_re attr_im attr_x attr_y attr_exp flags age`(+ `id`) | `wx, wy`는 **지름**. 이동 규칙 필드가 없으면 직선 외삽으로 대체 |
+| `lasers`, `laser_segs` | `active`, `width`, `id`, `seg_start`, `seg_count` / `ax ay bx by ra rb` | `ra, rb`는 이미 `max(width/2 − 4, 2)` |
+| `enemies` | `x`, `y`, `hurt_radius` | 0이면 접촉 무해 |
+
+검증 실패(형식·버전·범위·유한하지 않은 값·누락된 배열)는 입력 해제 요청(`observation_invalid`)이다.
+
+## 4. 알고리즘
+
+### 4.1 시간 규약
+
+관측은 틱 F의 `cosched_run_tasks` 직후(CONTRACT 1절)다. 행동은 틱 F+1의 `process_input`에서 적용된다. 이후 같은 틱에서 탄이 이동하고 충돌한다. 롤아웃의 `t`번째 걸음은 F+t 틱이며, 한 걸음은 다음 순서를 따른다.
+
+1. 플레이어가 입력대로 이동한다(원본 `player_move`: 방향 단위벡터 × 속도, 경계에서 16 이상 떨어지도록 고정, 반대 키는 상쇄).
+2. 탄이 `move_update`로 이동한다.
+3. 판정: 탄 기준 상대 선분 `a = P(t−1) − Q(t−1)`, `b = P(t) − Q(t)`와 탄 타원의 교차(원본 `calc_projectile_collision`).
+
+### 4.2 후보와 롤아웃
+
+- 후보 17개: 정지 1 + 8방향 × {보통, 저속}.
+- 후보마다 롤아웃(`horizon` 프레임, 기본 30): ① 같은 행동 유지 ② `k`프레임 유지 뒤 정지(`k ∈ rollout_stop_after` = 4, 8, 16). 이전 계획의 다음 단계(남은 이동 프레임 − 1)도 먼저 평가한다.
+- 후보는 "어떤 롤아웃이든 안전하면 안전"으로 본다(한 방향에 묶이지 않게). 매 프레임 다시 계획한다.
+
+### 4.3 탄의 미래 위치와 신뢰 등급
+
+| 등급 | 조건 | 전개 | 안전 여유 `m(t) = m0 + k·t` (px) |
+| --- | --- | --- | --- |
+| `exact` | MoveParams가 있고 직전 이동이 규칙과 일치 | 원본 `move_update`를 `horizon`번 되풀이(인력 포함) | 0.75 + 0.05 t |
+| `recent` | 최근 8프레임 안에 규칙 위반이 있었음 | 같음 | 1.25 + 0.15 t |
+| `extrap` | MoveParams 없음, `NOMOVE`, 또는 60프레임 안에 위반 3회 이상 | `pos − prevpos`로 등속 외삽 | 1.5 + 0.3 t |
+
+- **규칙 위반**은 상태 없이 역산한다. 현재 속도와 가속·유지율·인력에서 직전 속도를 되구하고, 실제 직전 이동(`pos − prevpos`)과 0.05 px 넘게 다르면 위반이다. 태스크가 `move`나 `pos`를 바꿨다는 뜻이다. 위반 수는 `stats().pred_fail`에 누적한다(실패 사례를 따로 센다).
+- `MoveParams` 전개는 "현재 이동 규칙이 유지될 때"의 위치일 뿐이다(CONTRACT 2.2절). 태스크가 미래에 바꾸는 경로는 모른다. 그래서 정확 전개 모드에서도 여유가 0이 아니다.
+- 탄 id가 있으면 위반 이력을 id별로 쌓는다. 없으면 그 프레임에만 `recent`로 본다.
+- 불필요한 계산을 줄이려고 도달 가능한 탄만 남긴다(플레이어 도달 반경 + 탄 이동 거리 + 크기 + 여유). 프레임 사이에 빠르게 지나가는 탄을 놓치지 않도록 끝점이 아니라 **이동 선분과의 거리**로 거른다. 남은 탄이 `max_relevant`(기본 384)를 넘으면 가까운 순으로 자르고 `conservative`로 표시한다.
+
+### 4.4 충돌 판정 (원본과 같은 식)
+
+`ai/policies/avoid-v1/geometry.js`, `scene.js`는 원본 `util/geometry.c`, `projectile.c`, `lasers/laser.c`, `enemy.c`의 식을 옮겼다.
+
+| 대상 | 판정 | 경계 |
+| --- | --- | --- |
+| 적 탄(원형) | 상대 선분의 최근접점 거리² ≤ (wx/2)² | 경계 포함 |
+| 적 탄(타원) | `−angle`만큼 돌리고 y를 `wx/wy`배 해서 지름 `wx`인 원으로 만든 뒤 같은 식 | 경계 포함 |
+| 레이저 | 캡슐 표면 거리 `< 0`(반지름이 양 끝에서 다른 uneven capsule). 또는 플레이어 이동 선분이 구간 중심선을 가로지르면 즉시 피격 | 경계 미포함 |
+| 적 접촉 | 중심 거리 `< hurt_radius`. 선분 판정 없음 | 경계 미포함 |
+
+판정에는 두 단계가 있다. **확정 피격**은 위 식 그대로이고, **여유 침범**은 같은 도형을 `m(t)`만큼 부풀린 것이다. 후보는 여유 침범이 없을 때만 "안전"이다.
+
+레이저 처리:
+
+- 활성 레이저는 현재 형상으로 본다. 직전 관측과 같은 레이저·같은 구간 수이면 끝점 이동량으로 선형 이동을 가정하고, 회전·곡선에 대비해 시간 제곱에 비례하는 여유를 더한다. 비교할 수 없으면 큰 여유를 쓴다.
+- 충전 중(`active = 0`)이면 활성 시점을 폭 변화로 추정한다. 원본 `laser_charge`는 폭을 충전 단계(≤ 2) → 확장 단계(직선 증가) → 소멸 단계로 바꾸고 `폭 > 목표폭 × 0.6`부터 충돌한다. 확장 단계의 연속한 두 관측으로 목표폭(= 증가량 × 20)과 남은 프레임을 구하고, 그 시점부터 목표 반지름까지 커진다고 본다. 충전 단계에서는 시작 시점을 알 수 없어 **즉시 활성**으로 본다(여유 6 px 추가). 관측에 `activate_in`이 직접 주어지면 그 값을 쓴다.
+- 레이저 구간은 한 틱 늦다(CONTRACT 1절). 여유로 흡수한다.
+
+### 4.5 무적과 사망
+
+- `phase`가 `recovering`·`bombing`(무적)이면 회피를 계속하되, 무적이 끝나는 프레임(`max(recoverytime, bomb_endtime, respawntime)`)보다 앞선 시점의 피격은 점수에 넣지 않는다.
+- `dead`(화면 밖)·`hit_pending`(데스봄 유예, 이동 불가)에서는 계산을 쉬고 공격만 유지한다(`dead_wait`).
+
+### 4.6 점수와 평가 순서
+
+평가 순서는 #22 v0.1과 같다. 예산이 끊겨도 앞 단계가 먼저 끝난다.
+
+1. **① 피격 확인**: 모든 후보의 롤아웃. 평가 순서는 이전 행동 → 정지 → 나머지. 안전한 롤아웃을 찾으면 그 후보는 끝낸다.
+2. **② 여유거리**: `Σ_t γ^(t−1)·Σ_탄 hazard`, `hazard = ((comfort − 거리)/comfort)²`(거리 < comfort 14 px).
+3. **③ 막다른 곳**: 6프레임 뒤 위치에서 다음 한 걸음이 안전한 후보 수(출구)를 센다. 적을수록 벌점 `max(0, 6 − 출구)² / 6`. 경계와 모서리는 출구가 적어서 자연히 벌점이 된다.
+4. **④ 방향 유지·위치 선호**: 방향 전환 벌점(반대 방향 1.0, 정지↔이동 0.5, 그 밖 0.4, 저속 전환 +0.15), 직전 행동 유지 보너스(−0.6), 위치 선호(보스 x에 정렬, 세로 `pos_pref.y`=460). 위치 선호는 약하다.
+
+후보 선택: 안전한 후보(어떤 롤아웃이든 여유 침범 없음) 중 비용 최소. 안전한 후보가 없으면 (확정 피격 시점, 여유 침범 시점)이 가장 늦은 후보 묶음에서 비용 최소(`risky`/`doomed`). 저속은 별도 규칙이 아니라 이 점수에서 나온다.
+
+### 4.7 시간 예산과 실패 처리
+
+- 판단 예산은 `budget_ms`(기본 **4 ms**, 실측 전 목표값)다. 동기 JS라 선점할 수 없고 후보·롤아웃 경계에서 `host.now()`를 확인하는 **협조적 마감**이다. 테스트에서 시계 없이 재현하려면 `work_limit`(결정적 작업량 상한)을 쓴다.
+- 예산을 넘으면(#22 v0.1 + 추가 규칙):
+  1. ①을 끝낸 안전 후보가 있으면 그중에서 고른다. 비용 계산이 끝나지 않았으면 이전 행동 → 정지 → 첫 후보 순으로 고른다. **①이 끝나지 않은 후보는 안전으로 고르지 않는다.**
+  2. 없으면 이전 계획의 다음 단계를 현재 관측으로 ①만 다시 확인해 통과할 때 쓴다(`reuse`).
+  3. 둘 다 아니면 `release` 요청(`halt`, 사유 `policy_deadline`)이다. 안전하다고 보고하지 않는다. 연속 `deadline_suspend_after`회면 `suspend`를 요청한다.
+- 프레임 번호가 건너뛰면(`on_frame_gap: 'halt'`) 추적 이력을 지우고 그 프레임은 `release`(`frame_gap`)다. `'reset'`이면 이력만 지우고 이어간다. 에피소드 변경·프레임 되감기는 이력을 지우고 이어간다.
+- 정지(입력 해제)는 안전 동작이 아니다. 정지 자체가 피격으로 이어질 수 있다. 이런 프레임은 `stats().halts`로 따로 센다.
+- 불완전 관측(`overflow ≠ 0`)에서는 여유를 `overflow_margin_scale`(2)배로 키워 같은 알고리즘을 돌리되 `conservative`로 표시한다.
+
+### 4.8 봄 (별도 설정, 기본 꺼짐)
+
+- `config.bomb.enabled = false`가 기본이다. 켜면 `doomed`(모든 후보가 확정 피격)이고 가장 늦은 피격이 `trigger_frames`(8) 안이며 `phase = normal`이고 봄이 남았을 때 한 번 쓴다(`max_per_episode`, 기본 1).
+- `bomb.deathbomb`는 `hit_pending`(데스봄 유예)에서 쓰는 선택이다.
+- 사용할 때마다 `stats().bombs`에 `{ frame, kind: 'policy' | 'deathbomb', bombs_before, predicted_hit_frame, choice }`를 남긴다. 봄 없는 결과와 봄 있는 결과는 따로 보고한다(평가 #23의 `bombs_policy`, `bombs_deathbomb`).
+
+## 5. 설정 (`describe().config`)
+
+기본값과 범위는 `ai/policies/avoid-v1/config.js`에 있다. 주요 항목만 적는다.
+
+| 항목 | 기본 | 뜻 |
+| --- | --- | --- |
+| `horizon` | 30 | 예측 프레임 수 |
+| `budget_ms` / `work_limit` | 4 / 0 | 판단 예산(ms) / 결정적 작업량 상한(0이면 끔) |
+| `shoot` | true | 공격 유지 |
+| `weights.{clear, deadend, turn, pos, stick}` | 1, 1.2, 1, 0.6, 0.6 | 비용 가중치 |
+| `margin.{exact, recent, extrap, laser, enemy}` | 위 표 | 안전 여유 `[m0, k]` |
+| `rollout_stop_after` | [4, 8, 16] | 이동 후 정지 롤아웃 |
+| `on_frame_gap` | `'halt'` | 프레임 건너뜀 처리 |
+| `deadline_suspend_after` | 10 | 연속 예산 초과 halt가 이 횟수면 suspend 요청 |
+| `bomb.*` | 꺼짐 | 4.8절 |
+| `trace` | 0 | 결정 요약 보관 프레임 수 |
+
+## 6. 검증
+
+실행:
+
+```bash
+node --test "tests/ai-policy/*.test.js"      # 전체 (의존성 없음, Node 24 기준 약 20초)
+node tests/ai-policy/report.mjs 1800 5       # fixture 비교 표
+```
+
+### 6.1 원본 판정 일치 (`collision.test.js`)
+
+- 기준은 원본 C 코드를 **직역한 JS 포트**(`oracle.js`: bbox 사전 거름과 `cdir` 회전을 포함)이며, 정책의 판정은 이것과 독립적으로 쓴 구현이다. **원본 C를 직접 실행해 비교한 것은 아니다.** 직역의 정확성은 코드 리뷰와 아래 경계 사례로 확인했다.
+- #21 v0.2의 "원본 일치 경계 사례" 표(원형 경계 포함, 타원 변환, 레이저 경계 미포함·중심선 교차, 적 접촉 경계 미포함, 탄 기준 상대 선분)를 사례별로 단언한다.
+- 무작위 비교: 탄 40,000건(원형 40 %, 타원 60 %, 정지·이동 플레이어), 레이저 30,000건, 캡슐 거리 20,000건에서 판정이 모두 일치한다.
+- 이 테스트가 프레임 사이를 지나가는 고속탄을 놓치는 결함(도달 가능 거름이 끝점만 봄)을 찾았고 고쳤다.
+- 좌표는 `float32`로 내보내므로(CONTRACT 0절) 경계 정밀도 한계는 약 3×10⁻⁵ px다. 안전 여유(≥ 0.75 px)가 이를 흡수한다. fixture 시뮬레이터는 기본으로 `Float32Array` 관측을 쓴다.
+
+### 6.2 정책 계약 (`policy.test.js`)
+
+번들 형식, 설정 검증, 관측 오류(형식·버전·범위·NaN/Infinity·누락 배열) 11종의 입력 해제, 프레임 건너뜀·에피소드 경계, 결정성(같은 관측열 → 같은 출력), `overflow` 보수 동작, 사망·데스봄, 봄 기본 꺼짐과 사용 기록, 무적 구간, 예산 초과 3단계와 suspend 승격, `work_limit`, `dispose`, `stats`/`trace`, 무작위로 망가진 관측 300건에서 예외 없음, 프레임 핸들러.
+
+### 6.3 fixture 시나리오 (`scenarios.test.js`)
+
+**합성 시뮬레이터**(`sim.js`)다. 판정식은 `oracle.js`(원본 직역)를 쓰고, 한 프레임의 순서는 입력 → 이동 → 탄 이동 → 판정이다. 관측은 계약 v1의 어댑터 형태를 따른다. 시드(mulberry32)와 정책 상태가 같으면 결과가 같다.
+
+시나리오: 직선탄(비), 교차탄, 가속·감속·곡선(인력) 탄, 타원 탄, 고속탄(프레임 사이 통과), 구석에서 시작(벽), 좁은 틈 벽, 규칙 밖 속도 변경 탄(예측 실패), 세로 레이저(원본 충전 곡선), 이동 레이저(틈 있음). 변형: MoveParams 없음, 캐릭터별 속도(레이무·마리사·요무), 레이저 폭 비공개.
+
+결과 요약(`report.mjs 1800 5`, 시드 5개, 프레임 1800):
+
+| 시나리오 | idle 완주 (평균 생존) | simple-move 완주 (평균 생존) | avoid-v1 완주 (평균 생존) | avoid-v1 입력 해제 프레임 | avoid-v1 판단 p50 / p95 (ms) |
+| --- | --- | --- | --- | --- | --- |
+| 직선탄(비) | 0/5 (192) | 0/5 (164) | 5/5 (1800) | 0 | 0.44 / 0.75 |
+| 직선탄(비, 고밀도) | 0/5 (174) | 0/5 (153) | 5/5 (1800) | 7 | 0.92 / 2.62 |
+| 교차탄 | 0/5 (129) | 0/5 (32) | 5/5 (1800) | 0 | 0.06 / 0.36 |
+| 가속·감속·곡선 탄 | 0/5 (96) | 0/5 (181) | 5/5 (1800) | 0 | 0.13 / 0.98 |
+| 타원 탄 | 0/5 (218) | 0/5 (196) | 5/5 (1800) | 1 | 0.18 / 0.44 |
+| 고속탄(프레임 사이 통과) | 0/5 (64) | 0/5 (68) | 5/5 (1800) | 0 | 0.05 / 0.11 |
+| 구석에서 시작(벽) | 0/5 (182) | 0/5 (149) | 5/5 (1800) | 0 | 0.25 / 0.78 |
+| 좁은 틈 벽 | 0/5 (167) | 0/5 (168) | 5/5 (1800) | 6 | 0.40 / 1.13 |
+| 규칙 밖 속도 변경 탄 | 0/5 (150) | 0/5 (347) | 5/5 (1800) | 0 | 0.12 / 0.27 |
+| 세로 레이저(충전→활성) | 0/5 (70) | 0/5 (83) | 5/5 (1800) | 0 | 0.05 / 0.09 |
+| 이동 레이저(틈 있음) | 0/5 (138) | 0/5 (138) | 5/5 (1800) | 0 | 0.05 / 0.12 |
+
+해석과 한계:
+
+- 정지·단순 이동은 모든 시나리오에서 맞았고 `avoid-v1`은 시드 5개 모두 1800프레임을 피격 없이 넘겼다. **이 시나리오들은 정책이 풀 수 있는 합성 패턴이다.** 실제 게임의 탄막(조준·호밍·밀집 패턴)이 같은 수준으로 풀린다는 증거가 아니다.
+- 입력 해제 프레임(0~7)은 모두 판단 시간 급증(다른 작업이 CPU를 쓰는 개발 PC의 일시 지연)이 4 ms 예산을 넘겨 안전 후보 확인이 끝나지 않은 프레임이다. 같은 시드를 CPU가 덜 바쁠 때 다시 돌리면 0이었다. 정책 논리가 낸 중단이 아니며, 예산 초과 규칙(4.7절)이 의도대로 작동한 사례다.
+- 판단 시간은 이 개발 PC(다른 작업이 CPU를 쓰는 중)의 값이다. 최대값은 부하·JIT·GC에 민감해 참고용이다. 4 ms 예산은 실측 전 목표값이며 실제 게임 연결 뒤 브리지 비용과 합쳐 다시 정한다.
+- 봄 사용 0회: fixture에서 확정 피격이 임박한 상황이 생기지 않았다(`doomed`는 단위 테스트의 수렴 탄 고리로 검증).
+
+## 7. 실제 게임 연결 (미완료)
+
+세션 2의 브리지(PR #39 문서·어댑터, fork C 구현 별도)와 세션 5의 셸 연결이 준비된 뒤에 한 패턴에 연결한다. 그때 채울 항목:
+
+- 대상: 스펠 연습 Stage 1의 스펠 1개, 캐릭터·샷 1조합 고정(#23 제안). 같은 설정에서 `idle`, `simple-move`와 반복 비교(시드 지정이 되면 같은 시드)
+- 지표: 생존 프레임, 피격 수, 봄 사용(정책/데스봄 분리), 판단 시간 p50·p95·max, 입력 해제 프레임, 예측 실패(`pred_fail`), `conservative` 프레임
+- 실패도 기록하고 특정 1회 성공을 일반적 클리어로 주장하지 않는다.
+
+## 8. 알려진 한계
+
+- 패턴 태스크가 미래에 바꾸는 경로(방향 전환, 순간이동, 호밍)는 예측하지 못한다. 매 프레임 다시 계획하고 위반을 겪은 탄은 큰 여유로 다루지만, 갑자기 생기는 위협에는 반응 시간이 필요하다.
+- 새로 생성되는 탄은 알 수 없다. 화면 위쪽 보스 근처에서 생성되는 탄은 생성 직후 가까운 거리에 나타날 수 있다.
+- 충전 단계의 레이저는 활성 시점을 알 수 없어 보수적으로(즉시 활성) 본다. 회전 레이저는 선형 이동 + 시간 제곱 여유로 근사한다.
+- 관측 개수 상한 초과 시 먼 탄이 빠진다. 가까운 순으로 남으므로 근접 판단은 유지되지만 `conservative`로 표시한다.
+- 4 ms 예산, 후보 17개 × 롤아웃 4종 × 30프레임은 합성 장면(탄 약 450개)에서 p95 약 1~3 ms였다. 탄 4096개가 모두 도달 범위에 들어오는 극단 상황은 측정하지 않았다.
+- 원본 C 코드를 직접 실행한 판정 비교는 하지 않았다(직역 포트와의 비교만).

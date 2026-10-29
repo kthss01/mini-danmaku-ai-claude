@@ -55,6 +55,7 @@ export class Scene {
 		this.lK = new Float64Array(L);     // 시점에 비례하는 추가 여유 기울기
 		this.lQ = new Float64Array(L);     // 시점 제곱에 비례하는 추가 여유(곡선·회전 오차)
 		this.laserPrev = new Map();        // 레이저 id → 직전 프레임의 세그먼트 끝점
+		this.laserWidth = new Map();       // 레이저 id → 직전 관측의 {frame, width} (충전 중 활성 시점 추정)
 
 		this.eX = new Float64Array(256);
 		this.eY = new Float64Array(256);
@@ -77,6 +78,7 @@ export class Scene {
 	resetTrust() {
 		this.trust.clear();
 		this.laserPrev.clear();
+		this.laserWidth.clear();
 	}
 
 	// 규칙 위반 기록. id가 없으면 이번 프레임에만 recent로 본다
@@ -172,7 +174,7 @@ export class Scene {
 			if (hasMove) {
 				const mvx = b.vx[i];
 				const mvy = b.vy[i];
-				const ret = Math.hypot(b.retention_re[i], b.retention_im[i]);
+				const ret = Math.hypot(b.ret_re[i], b.ret_im[i]);
 				const attr = hasAttr && (b.attr_re[i] !== 0 || b.attr_im[i] !== 0);
 
 				if (ret > 1.0001 || attr) {
@@ -221,7 +223,7 @@ export class Scene {
 			// 모드 결정
 			let mode = MODE_EXTRAP;
 			let violated = false;
-			const nomove = v.hasNomove && b.nomove[i] ? true : false;
+			const nomove = v.hasFlags && (b.flags[i] & 1) !== 0;
 
 			if (hasMove && !nomove) {
 				violated = this._violates(v, i, ex, ey);
@@ -330,8 +332,8 @@ export class Scene {
 			return false;
 		}
 
-		const rr = b.retention_re[i];
-		const ri = b.retention_im[i];
+		const rr = b.ret_re[i];
+		const ri = b.ret_im[i];
 		const den = rr * rr + ri * ri;
 
 		if (den < 1e-9) {
@@ -343,8 +345,8 @@ export class Scene {
 		let ny = b.vy[i] - b.ay[i];
 
 		if (v.hasAttr && (b.attr_re[i] !== 0 || b.attr_im[i] !== 0)) {
-			const avx = b.attr_px[i] - b.x[i];
-			const avy = b.attr_py[i] - b.y[i];
+			const avx = b.attr_x[i] - b.x[i];
+			const avy = b.attr_y[i] - b.y[i];
 			let mx = avx;
 			let my = avy;
 			const exp = b.attr_exp[i];
@@ -382,13 +384,13 @@ export class Scene {
 		let vy = b.vy[i];
 		const ax = b.ax[i];
 		const ay = b.ay[i];
-		const rr = b.retention_re[i];
-		const ri = b.retention_im[i];
+		const rr = b.ret_re[i];
+		const ri = b.ret_im[i];
 		const attr = v.hasAttr && (b.attr_re[i] !== 0 || b.attr_im[i] !== 0);
 		const tr = attr ? b.attr_re[i] : 0;
 		const ti = attr ? b.attr_im[i] : 0;
-		const apx = attr ? b.attr_px[i] : 0;
-		const apy = attr ? b.attr_py[i] : 0;
+		const apx = attr ? b.attr_x[i] : 0;
+		const apy = attr ? b.attr_y[i] : 0;
 		const exp = attr ? b.attr_exp[i] : 1;
 
 		for (let t = 1; t <= H; t++) {
@@ -422,6 +424,30 @@ export class Scene {
 		}
 	}
 
+	// 충전 중인 레이저의 활성 시점을 폭의 변화로 추정한다.
+	// 원본 laser_charge: 폭이 "충전 단계"에서 2 이하로 천천히 커지다가 "확장 단계"에서
+	// 1.7 + 목표폭/20 × τ 로 직선 증가하고, 폭 > 목표폭 × 0.6 부터 충돌이 활성이다.
+	// 확장 단계에서는 연속한 두 관측의 폭 차이(= 목표폭/20)로 목표폭과 남은 프레임을 구한다.
+	// 충전 단계에서는 시작 시점을 알 수 없어 null(활성 시점 모름)을 돌려준다.
+	_estimateActivation(key, width, frame) {
+		const prev = this.laserWidth.get(key);
+		this.laserWidth.set(key, { frame, width });
+
+		if (!prev || prev.frame !== frame - 1 || !Number.isFinite(width)) {
+			return null;
+		}
+
+		const slope = width - prev.width;
+
+		if (width <= 2.0001 || slope < 0.25) {
+			return null;
+		}
+
+		const target = slope * 20;
+		const frames = Math.ceil((0.6 * target - width) / slope);
+		return { act: Math.max(1, frames), targetRadius: Math.max(target * 0.5 - 4, 2) };
+	}
+
 	_buildLasers(v, reach) {
 		const cfg = this.cfg;
 		const P = v.player;
@@ -431,98 +457,109 @@ export class Scene {
 		const mMax = (cfg.margin.laser[0] + cfg.margin.laser[1] * H) * this.mscale + cfg.margin.laser_unknown_extra;
 		const hasAct = lasers.n > 0 && lasers.activate_in !== undefined && lasers.activate_in !== null;
 		const hasId = lasers.n > 0 && lasers.id !== undefined && lasers.id !== null;
+		const hasWidth = lasers.n > 0 && lasers.width !== undefined && lasers.width !== null;
 		const next = new Map();
-		const local = new Int32Array(lasers.n);
-		const pend = [];
+		const seen = new Set();
 		let nl = 0;
 
-		for (let s = 0; s < segs.n; s++) {
-			const li = segs.laser[s];
+		for (let li = 0; li < lasers.n; li++) {
 			const key = hasId ? lasers.id[li] : li;
-			const idx = local[li]++;
-			let rec = next.get(key);
-
-			if (!rec) {
-				rec = { n: 0, ax: [], ay: [], bx: [], by: [] };
-				next.set(key, rec);
-			}
-
-			rec.ax.push(segs.ax[s]);
-			rec.ay.push(segs.ay[s]);
-			rec.bx.push(segs.bx[s]);
-			rec.by.push(segs.by[s]);
-			rec.n++;
-
-			if (pend.length >= cfg.max_laser_segs) {
-				this.truncated = true;
-				continue;
-			}
-
+			const start = lasers.seg_start[li];
+			const count = lasers.seg_count[li];
 			const active = !!lasers.active[li];
-			pend.push({ s, li, key, idx, active });
-		}
+			const prev = this.laserPrev.get(key);
+			const rec = { n: count, ax: [], ay: [], bx: [], by: [] };
 
-		// 직전 관측과 같은 레이저·같은 세그먼트 수일 때만 끝점 이동량으로 선형 이동을 추정한다(분할 방식이 바뀌면 대응 관계를 알 수 없다)
-		for (const it of pend) {
-			const s = it.s;
-			const rec = next.get(it.key);
-			const prev = this.laserPrev.get(it.key);
-			let vax = 0, vay = 0, vbx = 0, vby = 0;
-			let k = 0;
-			let q = 0;
-
-			if (prev && prev.n === rec.n) {
-				vax = rec.ax[it.idx] - prev.ax[it.idx];
-				vay = rec.ay[it.idx] - prev.ay[it.idx];
-				vbx = rec.bx[it.idx] - prev.bx[it.idx];
-				vby = rec.by[it.idx] - prev.by[it.idx];
-				const sp = Math.max(Math.hypot(vax, vay), Math.hypot(vbx, vby));
-				q = 0.01 * sp; // 회전·곡선이면 선형 외삽은 시간 제곱으로 어긋난다
-			} else {
-				k = 0.3; // 이동을 알 수 없다
+			for (let s = start; s < start + count; s++) {
+				rec.ax.push(segs.ax[s]);
+				rec.ay.push(segs.ay[s]);
+				rec.bx.push(segs.bx[s]);
+				rec.by.push(segs.by[s]);
 			}
 
-			const sp = Math.max(Math.hypot(vax, vay), Math.hypot(vbx, vby));
-			const trav = sp * H + q * H * H + k * H;
-			const rmax = Math.max(segs.ra[s], segs.rb[s]) + mMax + trav;
-			const minx = Math.min(segs.ax[s], segs.bx[s]) - rmax;
-			const maxx = Math.max(segs.ax[s], segs.bx[s]) + rmax;
-			const miny = Math.min(segs.ay[s], segs.by[s]) - rmax;
-			const maxy = Math.max(segs.ay[s], segs.by[s]) + rmax;
+			next.set(key, rec);
+			seen.add(key);
 
-			if (maxx < P.x - reach || minx > P.x + reach || maxy < P.y - reach || miny > P.y + reach) {
-				continue;
-			}
-
+			// 충전 중이면 활성 시점을 알아낸다(관측에 직접 주어지면 그 값, 아니면 폭 이력으로 추정)
 			let act = 0;
-			let extra = 0;
+			let growth = 0;
+			let unknownExtra = 0;
 
-			if (!it.active) {
-				const ai = hasAct ? lasers.activate_in[it.li] : NaN;
+			if (!active) {
+				const ai = hasAct ? lasers.activate_in[li] : NaN;
+				const est = hasWidth ? this._estimateActivation(key, lasers.width[li], v.frame) : null;
 
 				if (Number.isFinite(ai) && ai >= 0) {
 					act = Math.max(1, Math.ceil(ai));
+				} else if (est) {
+					act = est.act;
+					growth = est.targetRadius;
 				} else {
 					act = 1; // 활성 시점을 모르면 즉시 위험으로 본다
-					extra = cfg.margin.laser_unknown_extra;
+					unknownExtra = cfg.margin.laser_unknown_extra;
 				}
+			} else if (hasWidth) {
+				this.laserWidth.set(key, { frame: v.frame, width: lasers.width[li] });
 			}
 
-			this.lAx[nl] = segs.ax[s];
-			this.lAy[nl] = segs.ay[s];
-			this.lBx[nl] = segs.bx[s];
-			this.lBy[nl] = segs.by[s];
-			this.lRa[nl] = segs.ra[s];
-			this.lRb[nl] = segs.rb[s];
-			this.lAct[nl] = act;
-			this.lExtra[nl] = extra;
-			this.lVax[nl] = vax;
-			this.lVay[nl] = vay;
-			this.lVbx[nl] = vbx;
-			this.lVby[nl] = vby;
-			this.lK[nl] = k;
-			this.lQ[nl] = q;
-			nl++;
+			for (let s = start; s < start + count; s++) {
+				if (nl >= cfg.max_laser_segs) {
+					this.truncated = true;
+					break;
+				}
+
+				const idx = s - start;
+				let vax = 0, vay = 0, vbx = 0, vby = 0;
+				let k = 0;
+				let q = 0;
+
+				// 직전 관측과 같은 레이저·같은 세그먼트 수일 때만 끝점 이동량으로 선형 이동을 추정한다
+				if (prev && prev.n === count) {
+					vax = segs.ax[s] - prev.ax[idx];
+					vay = segs.ay[s] - prev.ay[idx];
+					vbx = segs.bx[s] - prev.bx[idx];
+					vby = segs.by[s] - prev.by[idx];
+					q = 0.01 * Math.max(Math.hypot(vax, vay), Math.hypot(vbx, vby)); // 회전·곡선이면 시간 제곱으로 어긋난다
+				} else {
+					k = 0.3; // 이동을 알 수 없다
+				}
+
+				const sp = Math.max(Math.hypot(vax, vay), Math.hypot(vbx, vby));
+				const trav = sp * H + q * H * H + k * H;
+				const rmax = Math.max(segs.ra[s], segs.rb[s]) + mMax + trav + growth;
+				const minx = Math.min(segs.ax[s], segs.bx[s]) - rmax;
+				const maxx = Math.max(segs.ax[s], segs.bx[s]) + rmax;
+				const miny = Math.min(segs.ay[s], segs.by[s]) - rmax;
+				const maxy = Math.max(segs.ay[s], segs.by[s]) + rmax;
+
+				if (maxx < P.x - reach || minx > P.x + reach || maxy < P.y - reach || miny > P.y + reach) {
+					continue;
+				}
+
+				this.lAx[nl] = segs.ax[s];
+				this.lAy[nl] = segs.ay[s];
+				this.lBx[nl] = segs.bx[s];
+				this.lBy[nl] = segs.by[s];
+				this.lRa[nl] = segs.ra[s];
+				this.lRb[nl] = segs.rb[s];
+				this.lAct[nl] = act;
+				// 활성이 된 뒤에는 폭이 목표까지 커지므로 반지름 증가분을 여유로 더한다
+				this.lExtra[nl] = unknownExtra + (growth > 0 ? Math.max(0, growth - Math.max(segs.ra[s], segs.rb[s])) : 0);
+				this.lVax[nl] = vax;
+				this.lVay[nl] = vay;
+				this.lVbx[nl] = vbx;
+				this.lVby[nl] = vby;
+				this.lK[nl] = k;
+				this.lQ[nl] = q;
+				nl++;
+			}
+		}
+
+		// 사라진 레이저의 이력은 버린다
+		for (const key of this.laserWidth.keys()) {
+			if (!seen.has(key)) {
+				this.laserWidth.delete(key);
+			}
 		}
 
 		this.laserPrev = next;

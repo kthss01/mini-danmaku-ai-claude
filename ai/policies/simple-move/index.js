@@ -2,14 +2,14 @@
 // 회피 정책과 같은 조건에서 비교하기 위한 것이며 탄을 보지 않는다.
 // 정책 번들 형식(`taisei.ai.policy/0`)은 avoid-v1과 같다.
 
-export const HOLD = Object.freeze({ UP: 1, DOWN: 2, LEFT: 4, RIGHT: 8, FOCUS: 16, SHOT: 32 });
+export const HOLD = Object.freeze({ UP: 1, DOWN: 2, LEFT: 4, RIGHT: 8, FOCUS: 16, SHOT: 32, SKIP: 64 });
 
 export const meta = Object.freeze({
 	schema: 'taisei.ai.policy/0',
 	id: 'simple-move',
 	version: '0.1.0',
-	obs_schema: ['taisei.ai.obs/0'],
-	act_schema: 'taisei.ai.act/0',
+	obs_schema: ['taisei.ai.obs/1'],
+	act_schema: 'taisei.ai.act/1',
 });
 
 export function init(config) {
@@ -27,17 +27,16 @@ export function init(config) {
 			decisions++;
 
 			if (start === null) {
-				start = obs.frame;
+				start = obs.meta.frame;
 			}
 
 			// 주기마다 방향을 바꾼다. 위치와 무관해서 벽에서는 제자리에 눌려 있게 된다
-			const phase = Math.floor((obs.frame - start) / cfg.half_period) % 2;
+			const phase = Math.floor((obs.meta.frame - start) / cfg.half_period) % 2;
 			return {
 				hold: (phase === 0 ? HOLD.RIGHT : HOLD.LEFT) | (cfg.shoot ? HOLD.SHOT : 0),
-				bomb: 0,
-				special: 0,
+				edges: 0,
 				request: null,
-				meta: { mode: 'normal', frame: obs.frame, safe_verified: false },
+				meta: { mode: 'normal', frame: obs.meta.frame, safe_verified: false },
 			};
 		},
 		reset() {
