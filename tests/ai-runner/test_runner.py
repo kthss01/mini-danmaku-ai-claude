@@ -322,10 +322,11 @@ class SiteRunTests(unittest.TestCase):
             time.sleep(2)  # enable 이후 감시 루프에 들어가도록 잠시 둔다.
             import signal
             proc.send_signal(signal.CTRL_BREAK_EVENT)
-            proc.communicate(timeout=60)
+            proc.communicate(timeout=180)  # 다른 작업으로 PC가 느릴 때도 정리까지 기다린다
         finally:
             if proc.poll() is None:
-                proc.kill()
+                from runner import procs
+                procs.kill_tree(proc.pid)  # 실패해도 자식 서버·브라우저가 고아로 남지 않게 트리째 종료
         self.assertEqual(proc.returncode, config.EXIT_ABORTED)
         ep = self.episode()
         self.assertEqual((ep["run"]["status"], ep["run"]["reason"]), ("aborted", "user_abort"))

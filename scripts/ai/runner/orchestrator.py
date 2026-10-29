@@ -278,15 +278,20 @@ def run(argv: list[str]) -> int:
         except OSError as exc:
             record_failed = True
             logger.log(f"summary.json 기록 실패: {exc!r}", "ERROR")
+        # summary 기록 실패가 확인되면 run.json을 쓰기 전에 최종 종료 코드를 확정해, 프로세스 반환 코드와
+        # run.json의 exit_code가 어긋나지 않게 한다. 결과 기록이 불완전하므로 정상(0)으로 보고하지 않는다.
+        if record_failed and exit_code == cfgmod.EXIT_OK:
+            exit_code = cfgmod.EXIT_RUNNER_ERROR
+            manifest["error"] = manifest.get("error") or "summary.json을 기록하지 못했습니다"
         manifest.update({"finished": True, "ended_at": utc_now(), "exit_code": exit_code,
                          "interrupted": interrupted})
         try:
             write_json(run_dir.path / "run.json", manifest)
         except OSError as exc:
-            record_failed = True
+            # run.json 자체를 쓰지 못하면 기록으로 남길 수 없다. 표준 오류와 프로세스 종료 코드로만 알린다.
             logger.log(f"run.json 기록 실패: {exc!r}", "ERROR")
-        if record_failed and exit_code == cfgmod.EXIT_OK:
-            exit_code = cfgmod.EXIT_RUNNER_ERROR  # 결과 기록이 불완전하므로 정상 종료로 보고하지 않는다
+            if exit_code == cfgmod.EXIT_OK:
+                exit_code = cfgmod.EXIT_RUNNER_ERROR
         logger.log(f"run {run_id} 종료: exit_code={exit_code} cleanup={manifest['cleanup']['status']}")
         logger.close()
     print(json.dumps({"run_id": run_id, "run_dir": str(run_dir.path), "exit_code": exit_code,

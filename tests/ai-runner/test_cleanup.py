@@ -248,15 +248,45 @@ class BestEffortLoggingTests(unittest.TestCase):
                 self.addCleanup(mock.patch.stopall)
                 code = orchestrator.run(["--site", str(site), "--run-root", str(Path(tmp) / "runs"),
                                          "--mode", "smoke"])
+            manifest = S.read_json(S.last_run_dir(Path(tmp) / "runs") / "run.json")
+        self.last_manifest = manifest
         return code, stopped
 
     def test_driver_close_failure_still_stops_server(self):
         code, stopped = self.run_with_fakes()
         self.assertEqual(stopped, [True])
         self.assertEqual(code, 0)
+        self.assertEqual(self.last_manifest["exit_code"], 0)
 
-    def test_final_record_failure_does_not_skip_server_stop_and_is_not_reported_ok(self):
+    def test_summary_failure_is_exit_5_in_both_return_code_and_saved_manifest(self):
         code, stopped = self.run_with_fakes(_write_summary={"side_effect": OSError("summary failed")})
+        self.assertEqual(stopped, [True])
+        self.assertEqual(code, config.EXIT_RUNNER_ERROR)
+        # run.json은 쓰기에 성공했으므로 프로세스 반환 코드와 같은 최종 종료 코드가 들어 있어야 한다.
+        self.assertTrue(self.last_manifest["finished"])
+        self.assertEqual(self.last_manifest["exit_code"], config.EXIT_RUNNER_ERROR)
+        self.assertIn("summary.json", self.last_manifest["error"])
+
+    def test_run_json_write_failure_is_exit_5_via_return_code(self):
+        # run.json 쓰기만 실패하는 경우: 기록은 남길 수 없으므로 반환 코드로만 알린다(첫 호출들은 성공해야 run.json이 시작 시 생성된다).
+        real_write = orchestrator.write_json
+        calls = {"n": 0}
+
+        def flaky(path, value):
+            calls["n"] += 1
+            if value.get("finished") is True and Path(path).name == "run.json":
+                raise OSError("run.json failed")
+            return real_write(path, value)
+
+        stopped = []
+        with tempfile.TemporaryDirectory() as tmp:
+            site = S.make_site(Path(tmp))
+            with mock.patch.object(orchestrator, "SiteServer", _fake_server_class(stopped)), \
+                 mock.patch.object(orchestrator, "EpisodeDriver", FakeDriver), \
+                 mock.patch.object(orchestrator, "find_browser", return_value="chrome"), \
+                 mock.patch.object(orchestrator, "write_json", side_effect=flaky):
+                code = orchestrator.run(["--site", str(site), "--run-root", str(Path(tmp) / "runs"),
+                                         "--mode", "smoke"])
         self.assertEqual(stopped, [True])
         self.assertEqual(code, config.EXIT_RUNNER_ERROR)
 
