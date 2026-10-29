@@ -101,6 +101,27 @@
     <button id="hud-log" type="button" title="게임 로그 보기">로그</button>
 </div>
 
+<!-- AI 모드 패널: 브리지가 연결되었거나 ?ai= 로 요청했을 때만 shell.js가 보여준다. 수동 플레이에는 영향이 없다. -->
+<div id="ai-panel" hidden>
+    <div class="ai-row">
+        <span id="ai-badge" class="ai-badge" data-mode="manual">수동</span>
+        <span id="ai-adapter" class="small muted"></span>
+        <button id="ai-start" type="button">AI 시작</button>
+        <button id="ai-suspend" type="button">정지</button>
+        <button id="ai-resume" type="button">재개</button>
+        <button id="ai-manual" type="button">수동으로</button>
+        <button id="ai-details-toggle" type="button" title="AI 상태 자세히">▾</button>
+    </div>
+    <p id="ai-message" class="small" role="status" aria-live="polite"></p>
+    <ul id="ai-warnings" class="small"></ul>
+    <div id="ai-details" class="small" hidden>
+        <p id="ai-policy" class="muted"></p>
+        <p id="ai-decision" class="muted"></p>
+        <p class="muted">공격: 수동 모드에서는 게임 설정의 자동 발사(<code>shot_inverted</code>)가 물리 키에 적용되어, 켜져 있으면 <kbd>Z</kbd>를 누르지 않을 때 쏘고 누르는 동안 멈춥니다. AI 모드의 공격 입력은 이 반전과 무관하게 항상 &quot;공격 중&quot;입니다.</p>
+        <p class="muted">AI가 동작하는 동안 게임 키를 누르면 즉시 수동 모드로 바뀝니다(입력을 섞지 않습니다). 일시정지·창 포커스 상실 후에는 자동으로 재개하지 않으니 <b>재개</b>를 눌러 주세요.</p>
+    </div>
+</div>
+
 <!-- 플레이 중 조작 안내 팝업(HUD 버튼으로 열고 닫는다) -->
 <div id="controls-popover" hidden>
     <div class="popover-body">
@@ -121,6 +142,7 @@
 </footer>
 
 <script src="shell-config.js"></script>
+<script src="ai-host.js"></script>
 <script src="shell.js"></script>
 </body>
 </html>
