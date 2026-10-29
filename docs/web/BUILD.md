@@ -11,7 +11,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Taisei 커밋 | `1d4b468d…` (submodule 고정값 — 전체 해시는 `git ls-tree HEAD game/taisei`. fork PR kthss01/taisei#2 머지 커밋: 인트로 프롤로그를 첫 시청에도 Esc로 건너뛰기. 앞선 fork PR #1(`f59212b7`): 리소스 내려받기 실패 시 오류로 중단, [RUNTIME.md](RUNTIME.md) 4장) |
+| Taisei 커밋 | `cc3de0e0…` (submodule 고정값 — 전체 해시는 `git ls-tree HEAD game/taisei`. fork PR kthss01/taisei#4 머지 커밋: 한국어(`ko`) 번역 추가, [L10N.md](L10N.md). 앞선 fork PR #2(`1d4b468d`): 인트로 프롤로그를 첫 시청에도 Esc로 건너뛰기. 앞선 fork PR #1(`f59212b7`): 리소스 내려받기 실패 시 오류로 중단, [RUNTIME.md](RUNTIME.md) 4장) |
 | 빌드 이미지 | `taiseiproject/linux-toolkit:20260804@sha256:1104b4a5bba4d7f03f7d03cd6990571b476afe276c97d9d8074c33b1834474b2` |
 | emsdk / Emscripten | `5.0.3` (emsdk 태그 `5.0.3`로 clone) |
 | Meson cross-file | `misc/ci/common-options.ini`, `misc/ci/forcefallback.ini`, `configs/web-build/emscripten-toolchain.ini`, `misc/ci/emscripten-build.ini` |
