@@ -79,7 +79,10 @@ class SiteServer:
         if self._reader is not None:
             self._reader.join(timeout=2)
         if self._log_file is not None:
-            self._log_file.close()
+            try:
+                self._log_file.close()
+            except OSError:
+                pass
         if self.process is not None:
             info["process_gone"] = not procs.pid_alive(self.process.pid)
         if self.port is not None:

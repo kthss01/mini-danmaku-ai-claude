@@ -31,11 +31,13 @@ def _git(*args: str) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
-def main_commit_and_dirty() -> tuple[str | None, list[str]]:
+def main_commit_and_dirty() -> tuple[str | None, list[str] | None]:
+    """실행기 checkout의 커밋과 미커밋 변경. git status가 실패하면 빈 목록(clean)이 아니라 None(확인 불가)."""
     commit = (_git("rev-parse", "HEAD") or "").strip() or None
     dirty_raw = _git("status", "--porcelain")
-    dirty = [line for line in (dirty_raw or "").splitlines() if line.strip()]
-    return commit, dirty
+    if dirty_raw is None:
+        return commit, None
+    return commit, [line for line in dirty_raw.splitlines() if line.strip()]
 
 
 def inspect_site(cfg: RunConfig, site: Path) -> dict:
@@ -85,16 +87,37 @@ def inspect_site(cfg: RunConfig, site: Path) -> dict:
         "taisei_commit": build.get("taiseiCommit"),
         "build_repository_commit": build.get("repositoryCommit"),
         "build_started_at": build.get("buildStartedAtUtc"),
+        # 빌드·패키징 시점의 미커밋 변경. 기록에 없으면 None(확인 불가)이다.
         "build_dirty_entries": build.get("repositoryDirtyEntries"),
+        "build_taisei_dirty_entries": build.get("taiseiWorktreeDirtyEntries"),
         "packaging_dirty_entries": (info.get("packaging") or {}).get("repositoryDirtyEntries"),
+        "web_shell_dirty_entries": (info.get("packaging") or {}).get("webShellDirtyEntries"),
     }
 
 
-def code_block(site_facts: dict, main_commit: str | None, dirty: list[str]) -> dict:
+def aggregate_dirty(sources: dict) -> bool | None:
+    """재현 가능 여부 합산: 어느 출처든 변경이 있으면 True, 확인 불가(None)가 하나라도 있으면 None, 모두 비어 있어야 False."""
+    if any(isinstance(v, list) and v for v in sources.values()):
+        return True
+    if any(not isinstance(v, list) for v in sources.values()):
+        return None
+    return False
+
+
+def code_block(site_facts: dict, main_commit: str | None, dirty: list[str] | None) -> dict:
+    # 실행기 코드·빌드 소스·Taisei 작업 트리·패키징 입력·웹 셸을 구분해 모두 남기고 합산한다.
+    sources = {
+        "runner_checkout": dirty,
+        "build_repository": site_facts["build_dirty_entries"],
+        "build_taisei_worktree": site_facts["build_taisei_dirty_entries"],
+        "packaging_repository": site_facts["packaging_dirty_entries"],
+        "web_shell": site_facts["web_shell_dirty_entries"],
+    }
     return {
         "main_commit": main_commit,
-        "dirty": bool(dirty),
+        "dirty": aggregate_dirty(sources),
         "dirty_entries": dirty,
+        "dirty_sources": sources,
         "taisei_commit": site_facts["taisei_commit"],
         "build_flavor": site_facts["build_flavor"],
         "meson_options": site_facts["meson_options"],

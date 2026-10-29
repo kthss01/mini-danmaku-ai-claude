@@ -76,7 +76,7 @@ python -m unittest discover -s tests/ai-runner -v
 | 3 | 산출물 없음·`build-info.json` 없음·`taisei.wasm` 해시 불일치·빌드 종류 불일치(`--stage`/`--spell`인데 릴리스 빌드 포함). 실행 시작 전 | 없음 |
 | 4 | 서버·브라우저·페이지를 띄우지 못하거나 1번 에피소드가 `playing`/브리지 준비에 이르지 못함 | 있을 수 있음(오류 기록) |
 | 5 | 2번 이후 에피소드를 시작하지 못했거나 실행기 내부 오류로 남은 에피소드를 시도하지 못함 | 일부 |
-| 6 | 에피소드는 끝났지만 정리 실패: 브라우저 프로세스·임시 프로필·서버 포트·입력 해제가 남음(**누수**) | 모두 있음 |
+| 6 | 에피소드는 끝났지만 **정리가 깨끗하다고 확인되지 않음**. `run.json`의 `cleanup.status`로 구분한다: `leak`(브라우저 프로세스·임시 프로필·서버 포트·입력 해제가 남은 것이 확인됨), `unknown`(프로세스 조회 실패, 입력 해제 확인 실패, 정리 단계 예외처럼 확인 못 함 — 정리 검증 성공이 아님) | 모두 있음 |
 | 130 | 사용자 중단(Ctrl+C, Windows는 Ctrl+Break·SIGTERM도 같은 경로). 중단된 에피소드는 `aborted/user_abort` | 일부 |
 
 2·3·4의 실패도 `run.json`(`exit_code`, `error`)에 남긴다. 6은 v0.1 표에 없던 코드로 이번 v1에서 추가했다.
@@ -115,7 +115,7 @@ python -m unittest discover -s tests/ai-runner -v
      | `manual` / `bridge_error` | `error` / `runner_error` |
 
      `pause`·`focus_lost` 등 그 밖의 정지는 끝으로 보지 않고 이벤트·`owner_transitions`로만 남긴다(계획 외 정지 판정은 평가).
-   - 논리 프레임 한도: `state()`의 프레임(`frame`·`last_frame`·`lastFrame`)이 `enable` 시점 프레임보다 `max_frames` 이상 늘면 `completed / frame_limit`. 현재 호스트 API(PR #42)에는 한도 옵션이 없어 **실행기가 폴링으로 감지**한다(한도 120프레임 전부터 0.04초 간격으로 좁혀 폴링하지만 몇 프레임 넘길 수 있고, 그때 `run.detail`에 `runner_detected`를 적는다). 호스트가 한도를 정확히 집행하게 되면(`enable` 옵션으로 `limits.max_frames`를 이미 넘기고 있다) 그 값을 따른다. 스펠·스테이지 종료로 끝나는 실험에서는 프레임 한도가 안전장치일 뿐이다.
+   - 논리 프레임 한도: `state()`의 프레임(`frame`·`last_frame`·`lastFrame`)이 `enable` 시점 프레임보다 `max_frames` 이상 늘면 `completed / frame_limit`. 현재 호스트 API(PR #42)에는 한도 옵션이 없어 **실행기가 폴링으로 감지**한다(한도 120프레임 전부터 0.04초 간격으로 좁혀 폴링하지만 몇 프레임 넘길 수 있고, 그때 `run.detail`에 `runner_detected`를 적는다). 호스트가 한도를 정확히 집행하게 되면(`enable` 옵션으로 `limits.max_frames`를 이미 넘기고 있다) 그 값을 따른다. 스펠·스테이지 종료로 끝나는 실험에서는 프레임 한도가 안전장치일 뿐이다. 한도의 기준 프레임은 `enable` **직전** 샘플이며(직후 첫 샘플을 기준으로 하면 그 사이 프레임이 빠진다), `runner.frame_progress`에 `pre_enable_frame`·`first_sample_frame`·`end_frame`·`elapsed_frames`·`exceeded_by`·`limit_detected_by`(`runner`|`host`)를 남긴다. 폴링으로 감지한 한도는 정확 N프레임 비교에 쓰지 않는다.
    - 벽시계 한도 → `timeout / wall_timeout`
    - 셸이 `error`·`exited`·`unsupported`가 되거나 브라우저 연결이 끊김 → `error / runner_error`
 6. **정지 신호**: `await taiseiAI.disable('host_request')`. 직후 `state()`로 입력 해제를 확인한다(6.2).
@@ -181,12 +181,12 @@ artifacts/runs/<run_id>/            # run_id = YYYYMMDDTHHMMSSZ-<6hex>, artifact
 | 블록 | 쓰는 주체 | 내용 |
 | --- | --- | --- |
 | `schema`, `run_id`, `experiment_id`, `episode_index`, 시각 | 실행기 | `schema`는 세션 4 확정값 `taisei-ai-episode/1`(PR #41), run.json은 `taisei-ai-run/1` |
-| `code` | 실행기 | `main_commit`, `dirty`, `dirty_entries`, `taisei_commit`, **`build_flavor`**(`release`·`developer`), `meson_options`, `rules_preserved`(`original`=기본 빌드, `unverified`=개발자 빌드), `build_info_sha256`, `wasm_sha256`, `build_repository_commit`, `build_started_at` |
+| `code` | 실행기 | `main_commit`, `dirty`(합산: 어느 출처든 변경이 있으면 `true`, 확인 못 한 출처가 있으면 `null`, 모두 비어 있어야 `false`), `dirty_entries`(실행기 checkout), `dirty_sources`(`runner_checkout`·`build_repository`·`build_taisei_worktree`·`packaging_repository`·`web_shell`별 목록 또는 `null`=확인 불가. `git status` 실패는 clean이 아니라 `null`),  `taisei_commit`, **`build_flavor`**(`release`·`developer`), `meson_options`, `rules_preserved`(`original`=기본 빌드, `unverified`=개발자 빌드), `build_info_sha256`, `wasm_sha256`, `build_repository_commit`, `build_started_at` |
 | `config` | 실행기 | `scenario`(`kind`·`id`·`difficulty`·`character`·`shot`, smoke는 `kind: "menu"`), `policy`(`params_sha256` 포함), `seed`(`control: "random"`, `required: false`, `requested`·`actual`·`source`는 `null`: 시드를 지정하지 않고 게임이 `makeseed()`를 쓴다), `limits`, `mode`, `shot_inverted`·`shot_inverted_source`, `game_args` |
 | `run` | 실행기가 `error`·`timeout`·`aborted`·`completed` + 원시 사실 | `status`, `reason`, `evaluable`, `detail`, `elapsed_s`, `error_message`. 평가가 상태를 바꾸면 원래 값을 **`run.status_by_runner`**에 남긴다. 실행기는 이 필드를 쓰지 않는다 |
 | `owner_transitions`, `final`, `episode_id` | 실행기 | 소유권 전환 목록(`frame`·`wall_ms`·`state`·`reason`), 끝에 읽은 `{gameover, last_frame}`, 브리지 에피소드 번호 |
 | `result`, `events`, `metrics` | 평가(세션 4) | 실행기는 `result: null`로 두고, 이벤트 원본은 `evidence.events` 파일로 넘긴다 |
-| `runner` | 실행기 | `startup_s`, `running_s`, `bridge_present`, `shell_states`, `first_state`, `last_state`, `console_errors`, `input_release`, `cleanup` 등 실행 사실 |
+| `runner` | 실행기 | `startup_s`, `running_s`, `bridge_present`, `shell_states`, `first_state`, `last_state`, `console_errors`, `input_release`, `cleanup`, `cleanup_status`, `cleanup_errors`, `evidence_errors`, `frame_progress` 등 실행 사실 |
 | `evidence` | 실행기 | `events`, `artifacts`, `game_log`, `console_log`, `screenshot`, `log` 경로(run 폴더 기준 상대) |
 
 - `run.status`: `completed`(요청한 한도·종료까지 정상 진행) · `timeout`(벽시계 한도) · `error`(브라우저·서버·셸·브리지 오류) · `aborted`(사용자 중단). `invalid`·`unsupported`는 평가가 정한다.
@@ -199,7 +199,8 @@ artifacts/runs/<run_id>/            # run_id = YYYYMMDDTHHMMSSZ-<6hex>, artifact
 - 실행기는 **자기가 띄운 것만** 정리한다. 서버는 PID와 포트, 브라우저는 실행마다 새로 만든 임시 프로필(`taisei-ai-profile-*`) 경로로 식별한다. 기존 게임·서버·브라우저 창은 건드리지 않는다.
 - 에피소드마다 새 브라우저·새 임시 프로필을 쓴다. IndexedDB 상태(설정·진행·리소스 캐시)가 에피소드 사이에 섞이지 않는다. 대가로 에피소드마다 게임 로드 시간이 든다.
 - 종료 순서: 입력 해제 요청과 확인 → 증거 수집 → 페이지 종료 → 브라우저 종료(`Browser.close`, 안 되면 프로필 경로로 찾은 프로세스만 강제 종료) → 서버 종료 → 포트가 닫혔는지 확인. 예외·Ctrl+C에도 같은 순서를 `finally`에서 실행한다.
-- 정리 결과는 에피소드의 `runner.cleanup`·`runner.input_release`와 `run.json`의 `cleanup`에 남고, 누수가 있으면 종료 코드 6이다.
+- 정리 단계(입력 해제 확인 → 증거 수집 → 브라우저 종료 → 서버 종료)는 **각각 예외를 격리**한다. 앞 단계가 예외·중단으로 끝나도 브라우저와 서버 종료는 실행되고, 실패는 `runner.cleanup_errors`(정리 단계)·`runner.evidence_errors`(증거 수집·저장)에 남는다. artifact 저장 실패가 실행을 멈추게 하지 않는다.
+- 정리 판정은 에피소드마다 `runner.cleanup_status`(`clean`·`unknown`·`leak`), 실행 전체는 `run.json`의 `cleanup.status`다. `unknown`(프로세스 목록을 못 읽음, 브리지가 있었는데 입력 해제를 확인하지 못함, 정리 단계 예외)은 누수 확정이 아니지만 정리 검증 성공도 아니므로 `cleanup.ok`가 거짓이고 종료 코드 6이다. 브리지가 없는 smoke(`no_bridge`)는 해제할 입력이 없어 `clean`이다.
 
 ## 9. 브라우저 제어 방식을 CDP 직접 연결로 정한 이유
 

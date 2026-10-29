@@ -35,9 +35,9 @@ def make_site(root: Path, flavor: str = "release", wasm_bytes: bytes = b"\0asm-f
             "schema": 1, "flavor": flavor, "mesonOptions": ["-Dbuild.cpp_std=gnu++14"] + (["-Ddeveloper=true"] if flavor == "developer" else []),
             "rulesPreserved": "unverified" if flavor == "developer" else "original",
             "buildStartedAtUtc": "2026-10-29T00:00:00Z", "taiseiCommit": "f" * 40, "repositoryCommit": "e" * 40,
-            "repositoryDirtyEntries": [],
+            "repositoryDirtyEntries": [], "taiseiWorktreeDirtyEntries": [],
         },
-        "packaging": {"repositoryDirtyEntries": []},
+        "packaging": {"repositoryDirtyEntries": [], "webShellDirtyEntries": []},
         "site": {"entry": "game/index.html",
                  "sha256": {"game/taisei.wasm": hashlib.sha256(wasm_bytes).hexdigest()}},
     }

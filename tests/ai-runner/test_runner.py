@@ -159,6 +159,8 @@ class SiteRunTests(unittest.TestCase):
         self.assertEqual(ep["code"]["taisei_commit"], "f" * 40)
         self.assertEqual(ep["config"]["seed"]["control"], "random")
         self.assertEqual(ep["schema"], "taisei-ai-episode/1")
+        self.assertEqual(ep["runner"]["cleanup_status"], "clean")
+        self.assertEqual(ep["runner"]["cleanup_errors"], [])
         self.assertIs(ep["runner"]["input_release"]["released"], True)
         self.assertNotIn("status_by_runner", ep["run"])
         events = (run_dir / "episodes" / "0001.events.jsonl").read_text(encoding="utf-8")
@@ -197,6 +199,7 @@ class SiteRunTests(unittest.TestCase):
         self.assertIs(ep["runner"]["input_release"]["released"], False)
         record = S.read_json(S.last_run_dir(self.runs) / "run.json")
         self.assertFalse(record["cleanup"]["ok"])
+        self.assertEqual(record["cleanup"]["status"], "leak")
         self.assertEqual(record["cleanup"]["episodes_with_leaks"], [1])
 
     def test_missing_bridge_is_exit_4(self):
@@ -246,6 +249,11 @@ class SiteRunTests(unittest.TestCase):
         ep = self.episode()
         self.assertEqual((ep["run"]["status"], ep["run"]["reason"]), ("completed", "frame_limit"))
         self.assertIn("runner_detected", ep["run"]["detail"])
+        progress = ep["runner"]["frame_progress"]
+        self.assertEqual(progress["limit_detected_by"], "runner")
+        self.assertIsNotNone(progress["pre_enable_frame"])
+        self.assertGreaterEqual(progress["elapsed_frames"], progress["max_frames"])
+        self.assertEqual(progress["exceeded_by"], progress["elapsed_frames"] - progress["max_frames"])
 
     def test_user_key_takeover_is_aborted(self):
         done = self.execute("fixture-userkey")

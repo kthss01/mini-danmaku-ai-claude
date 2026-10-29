@@ -74,6 +74,10 @@ def _episode_document(cfg: RunConfig, run_id: str, code: dict, result: EpisodeRe
             "dropped_events": result.dropped_events,
             "input_release": result.input_release,
             "cleanup": result.cleanup,
+            "cleanup_status": cleanup_status(result),
+            "cleanup_errors": result.cleanup_errors,
+            "evidence_errors": result.evidence_errors,
+            "frame_progress": _frame_progress(cfg, result),
             "event_count": len(result.events),
         },
         "evidence": {
@@ -99,10 +103,41 @@ def _write_episode(run_dir: RunDir, doc: dict, result: EpisodeResult) -> None:
     write_json(run_dir.episode_path(result.index), doc)
 
 
-def _cleanup_ok(result: EpisodeResult) -> bool:
+def cleanup_status(result: EpisodeResult) -> str:
+    """에피소드의 정리 판정. leak(누수 확정) > unknown(확인 못 함) > clean. unknown은 정리 검증 성공이 아니다."""
     cleanup = result.cleanup or {}
-    return (not cleanup.get("remaining") and cleanup.get("profile_removed", True)
-            and result.input_release.get("released") is not False)
+    released = (result.input_release or {}).get("released")
+    if cleanup.get("remaining") or cleanup.get("profile_removed") is False or released is False:
+        return "leak"
+    # 정리 결과가 없거나, 프로세스·프로필 확인이 불가하거나, 정리 단계 예외가 있었다.
+    if (not cleanup or cleanup.get("remaining") is None or cleanup.get("profile_removed") is None
+            or cleanup.get("errors") or result.cleanup_errors):
+        return "unknown"
+    # 브리지가 있었는데 입력 해제를 확인하지 못했다. 브리지 없는 smoke(no_bridge)는 해제할 입력이 없다.
+    if result.bridge_present and released is None:
+        return "unknown"
+    return "clean"
+
+
+def server_cleanup_status(info: dict) -> str:
+    if info.get("port_closed") is False or info.get("process_gone") is False:
+        return "leak"
+    if info.get("port_closed") is None or info.get("process_gone") is None or info.get("error"):
+        return "unknown"
+    return "clean"
+
+
+def _frame_progress(cfg: RunConfig, result: EpisodeResult) -> dict:
+    """프레임 한도 판단 근거. 폴링으로 감지한 한도는 정확 N프레임 비교에 쓰지 않는다."""
+    base = result.pre_enable_frame if result.pre_enable_frame is not None else result.enable_frame
+    elapsed = None if base is None or result.end_frame is None else result.end_frame - base
+    detected = None
+    if result.reason == "frame_limit":
+        detected = "runner" if "runner_detected" in result.detail else "host"
+    return {"max_frames": cfg.max_frames, "pre_enable_frame": result.pre_enable_frame,
+            "first_sample_frame": result.enable_frame, "end_frame": result.end_frame, "elapsed_frames": elapsed,
+            "exceeded_by": None if elapsed is None else max(0, elapsed - cfg.max_frames),
+            "limit_detected_by": detected}
 
 
 def _failure_run_json(run_dir: RunDir, argv: list[str], exit_code: int, message: str, run_id: str) -> None:
@@ -212,13 +247,23 @@ def run(argv: list[str]) -> int:
     finally:
         if driver is not None:
             driver.close()
-        server_info = server.stop()
+        try:
+            server_info = server.stop()
+        except Exception as exc:  # noqa: BLE001 - 서버 종료 실패도 기록하고 요약·종료 코드는 끝까지 만든다
+            server_info = {"pid": None, "port": server.port, "port_closed": None, "process_gone": None,
+                           "error": repr(exc)}
         manifest["server_stop"] = server_info
-        leaks = [r for r in results if not _cleanup_ok(r)]
-        server_leak = not (server_info.get("port_closed") and server_info.get("process_gone"))
-        manifest["cleanup"] = {"ok": not leaks and not server_leak, "server": server_info,
-                               "episodes_with_leaks": [r.index for r in leaks]}
-        if exit_code == cfgmod.EXIT_OK and (leaks or server_leak):
+        statuses = {r.index: cleanup_status(r) for r in results}
+        server_status = server_cleanup_status(server_info)
+        all_statuses = [*statuses.values(), server_status]
+        run_status = "leak" if "leak" in all_statuses else "unknown" if "unknown" in all_statuses else "clean"
+        manifest["cleanup"] = {
+            "status": run_status, "ok": run_status == "clean", "server": server_info, "server_status": server_status,
+            "episodes_with_leaks": [i for i, s in statuses.items() if s == "leak"],
+            "episodes_unknown": [i for i, s in statuses.items() if s == "unknown"],
+        }
+        # 누수 확정(leak)과 정리 확인 불가(unknown) 모두 종료 코드 6이다. 구분은 cleanup.status로 한다.
+        if exit_code == cfgmod.EXIT_OK and run_status != "clean":
             exit_code = cfgmod.EXIT_CLEANUP_FAILED
         if results:
             manifest["browser"]["version"] = results[0].browser_version or None
@@ -226,7 +271,7 @@ def run(argv: list[str]) -> int:
         manifest.update({"finished": True, "ended_at": utc_now(), "exit_code": exit_code,
                          "interrupted": interrupted})
         write_json(run_dir.path / "run.json", manifest)
-        logger.log(f"run {run_id} 종료: exit_code={exit_code} cleanup_ok={manifest['cleanup']['ok']}")
+        logger.log(f"run {run_id} 종료: exit_code={exit_code} cleanup={manifest['cleanup']['status']}")
         logger.close()
     print(json.dumps({"run_id": run_id, "run_dir": str(run_dir.path), "exit_code": exit_code,
                       "status_counts": dict(Counter(r.status for r in results))}, ensure_ascii=False))

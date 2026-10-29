@@ -163,7 +163,11 @@ class EpisodeResult:
     shell_states: list = field(default_factory=list)
     owner_transitions: list = field(default_factory=list)
     browser_version: str = ""
-    enable_frame: int | None = None
+    enable_frame: int | None = None          # enable 직후 첫 샘플의 프레임
+    pre_enable_frame: int | None = None      # enable 직전 마지막 샘플의 프레임(한도 기준)
+    end_frame: int | None = None             # 마지막으로 본 프레임
+    evidence_errors: list = field(default_factory=list)   # 증거 수집·저장 중 실패(정리 판정과 별개로 보존)
+    cleanup_errors: list = field(default_factory=list)    # 정리 단계 예외(입력 해제 확인·브라우저 종료)
     t_enable: float | None = None
 
 
@@ -243,6 +247,9 @@ class EpisodeDriver:
             result.shell_final = data["shell"]
         if data.get("ai") is not None:
             result.last_state = data["ai"]
+            frame_now = state_frame(data["ai"])
+            if frame_now is not None:
+                result.end_frame = frame_now
             if result.first_state is None:
                 result.first_state = data["ai"]
         result.dropped_events = max(result.dropped_events, data.get("dropped", 0))
@@ -283,10 +290,16 @@ class EpisodeDriver:
         except (ValueError, TypeError):
             self.logger.log(f"artifact {name} 디코딩 실패", "WARN")
             return
-        target = self.run_dir.episode_extra_dir(index) / name
-        with open(target, "ab") as handle:
-            handle.write(payload)
         rel = f"episodes/{index:04d}/{name}"
+        try:
+            target = self.run_dir.episode_extra_dir(index) / name
+            with open(target, "ab") as handle:
+                handle.write(payload)
+        except OSError as exc:
+            # 증거 저장 실패가 실행·정리를 막지 않게 하고, 실패 사실은 에피소드 기록에 남긴다.
+            result.evidence_errors.append(f"artifact {name} 저장 실패: {exc!r}")
+            self.logger.log(f"episode {index}: artifact {name} 저장 실패: {exc!r}", "WARN")
+            return
         if rel not in result.artifacts:
             result.artifacts.append(rel)
 
@@ -429,6 +442,8 @@ class EpisodeDriver:
                 result.status, result.reason = "error", "policy_error"
                 result.detail = f"정책 {cfg.policy!r}을(를) 불러오지 못했습니다: {exc}"
                 return
+        # 프레임 한도의 기준은 enable 직전 샘플이다. enable 직후 첫 샘플을 기준으로 하면 그 사이에 진행한 프레임이 빠진다.
+        result.pre_enable_frame = state_frame(result.last_state)
         # 호스트 API의 enable()은 반환 코드('ok'·'not_playing'·'no_policy' 등)를 준다. 옵션은 무시될 수 있다.
         code = conn.evaluate(f"window.taiseiAI.enable({json.dumps(options)})", await_promise=True, timeout=30)
         result.started_at = utc_now()
@@ -481,16 +496,23 @@ class EpisodeDriver:
         if outcome is not None:
             return (*outcome, f"브리지 상태에서 파생: {owner}/{reason}")
         frame = state_frame(state)
-        if frame is not None and result.enable_frame is not None and frame - result.enable_frame >= self.cfg.max_frames:
+        base = self._baseline(result)
+        if frame is not None and base is not None and frame - base >= self.cfg.max_frames:
             return ("completed", "frame_limit",
-                    f"runner_detected: 프레임 {result.enable_frame}→{frame} (한도 {self.cfg.max_frames}, 폴링 간격만큼 넘을 수 있음)")
+                    f"runner_detected: 프레임 {base}→{frame} (경과 {frame - base}, 한도 {self.cfg.max_frames}, "
+                    f"초과 {frame - base - self.cfg.max_frames}; 폴링 간격만큼 넘을 수 있어 정확 N프레임 비교에 쓰지 않는다)")
         return None
+
+    @staticmethod
+    def _baseline(result: EpisodeResult):
+        return result.pre_enable_frame if result.pre_enable_frame is not None else result.enable_frame
 
     def _poll_delay(self, state: dict | None, result: EpisodeResult) -> float:
         """프레임 한도가 가까우면 폴링 간격을 줄여 한도를 넘는 프레임 수를 줄인다(60fps에서 0.25초 = 15프레임)."""
         frame = state_frame(state)
-        if frame is not None and result.enable_frame is not None:
-            if self.cfg.max_frames - (frame - result.enable_frame) <= 120:
+        base = self._baseline(result)
+        if frame is not None and base is not None:
+            if self.cfg.max_frames - (frame - base) <= 120:
                 return 0.04
         return POLL_INTERVAL_S
 
@@ -505,12 +527,27 @@ class EpisodeDriver:
     # ---- 정리 ----
     def _finish(self, conn: CdpConnection | None, browser: Browser, index: int, result: EpisodeResult) -> None:
         """입력 해제 확인 → 증거 수집 → 페이지·브라우저 종료. 예외가 나도 끝까지 진행한다."""
-        if conn is not None and not conn.closed.is_set():
-            self._release_inputs(conn, index, result)
-            self._collect_evidence(conn, index, result)
-        result.cleanup = browser.close()
-        self.logger.log(f"episode {index}: 브라우저 정리 {result.cleanup}")
-        result.ended_at = utc_now()
+        try:
+            if conn is not None and not conn.closed.is_set():
+                self._guard("입력 해제 확인", index, result, lambda: self._release_inputs(conn, index, result))
+                self._guard("증거 수집", index, result, lambda: self._collect_evidence(conn, index, result))
+        finally:
+            # 앞 단계가 예외·중단으로 끝나도 브라우저는 반드시 닫는다.
+            try:
+                result.cleanup = browser.close()
+            except Exception as exc:  # noqa: BLE001 - 종료 실패도 증거로 남긴다
+                result.cleanup = {"forced": [], "remaining": None, "profile_removed": None, "errors": [repr(exc)]}
+                result.cleanup_errors.append(f"브라우저 종료 예외: {exc!r}")
+            self.logger.log(f"episode {index}: 브라우저 정리 {result.cleanup}")
+            result.ended_at = utc_now()
+
+    def _guard(self, label: str, index: int, result: EpisodeResult, action) -> None:
+        """정리 단계 하나를 실행하고, 예외는 기록만 한 채 다음 단계가 실행되게 한다(Ctrl+C 등 BaseException은 그대로 올린다)."""
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001
+            result.cleanup_errors.append(f"{label} 예외: {exc!r}")
+            self.logger.log(f"episode {index}: {label} 중 예외: {exc!r}", "ERROR")
 
     def _release_inputs(self, conn: CdpConnection, index: int, result: EpisodeResult) -> None:
         if not result.bridge_present:
@@ -534,8 +571,8 @@ class EpisodeDriver:
                                         "detail": "ok" if owner == "manual" else "disable 뒤에도 manual이 아닙니다"}
             else:
                 result.input_release = {"released": None, "detail": "state()가 소유권·입력 정보를 주지 않았습니다", "state": state}
-        except CdpError as exc:
-            result.input_release = {"released": None, "detail": f"확인 실패: {exc}"}
+        except Exception as exc:  # noqa: BLE001 - 연결·파일·형식 오류 모두 '확인 실패(unknown)'이지 해제 성공이 아니다
+            result.input_release = {"released": None, "detail": f"확인 실패: {exc!r}"}
 
     def _collect_evidence(self, conn: CdpConnection, index: int, result: EpisodeResult) -> None:
         try:
@@ -551,5 +588,6 @@ class EpisodeDriver:
                     path = self.run_dir.episode_extra_dir(index) / "last-screen.png"
                     path.write_bytes(base64.b64decode(shot))
                     result.evidence["screenshot"] = f"episodes/{index:04d}/last-screen.png"
-        except (CdpError, OSError) as exc:
-            self.logger.log(f"episode {index}: 증거 수집 일부 실패: {exc}", "WARN")
+        except Exception as exc:  # noqa: BLE001
+            result.evidence_errors.append(f"증거 수집 실패: {exc!r}")
+            self.logger.log(f"episode {index}: 증거 수집 일부 실패: {exc!r}", "WARN")

@@ -142,12 +142,16 @@ class Browser:
 
         돌려주는 값: {"forced": 강제 종료한 PID 목록, "remaining": 정리 뒤에도 남은 PID 목록}
         """
+        errors: list[str] = []
         if self.conn is not None:
             try:
                 self.conn.call("Browser.close", timeout=5)
             except CdpError:
                 pass
-            self.conn.close()
+            try:
+                self.conn.close()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"연결 종료 예외: {exc!r}")
             self.conn = None
         if self.process is not None:
             try:
@@ -155,18 +159,26 @@ class Browser:
             except subprocess.TimeoutExpired:
                 pass
         forced: list[int] = []
-        remaining: list[int] = []
+        remaining: list[int] | None = []
         # 자손(렌더러·GPU) 프로세스가 남을 수 있으므로 프로필 경로로 한 번 더 찾는다.
-        for attempt in range(3):
-            pids = procs.find_pids_by_cmdline(self.marker)
-            if not pids:
-                break
-            for pid in pids:
-                if pid not in forced:
-                    forced.append(pid)
-                procs.kill_tree(pid)
-            time.sleep(0.5)
-        remaining = procs.find_pids_by_cmdline(self.marker)
+        # 조회가 실패하면 남은 프로세스가 없다고 단정하지 않고 remaining=None(확인 불가)으로 남긴다.
+        try:
+            for attempt in range(3):
+                pids = procs.find_pids_by_cmdline(self.marker)
+                if not pids:
+                    break
+                for pid in pids:
+                    if pid not in forced:
+                        forced.append(pid)
+                    procs.kill_tree(pid)
+                time.sleep(0.5)
+            remaining = procs.find_pids_by_cmdline(self.marker)
+        except Exception as exc:  # noqa: BLE001
+            remaining = None
+            errors.append(f"프로세스 조회 실패: {exc!r}")
+        # 조회 실패 때는 시작 프로세스 자체라도 강제 종료를 시도한다.
+        if remaining is None and self.process is not None and self.process.poll() is None:
+            procs.kill_tree(self.process.pid)
         self.leaked_pids = forced
         # 프로세스가 완전히 사라진 뒤에야 프로필이 지워진다(Windows는 열린 파일 삭제가 실패한다).
         for _ in range(10):
@@ -174,4 +186,5 @@ class Browser:
             if not self.profile_dir.exists():
                 break
             time.sleep(0.3)
-        return {"forced": forced, "remaining": remaining, "profile_removed": not self.profile_dir.exists()}
+        return {"forced": forced, "remaining": remaining, "profile_removed": not self.profile_dir.exists(),
+                "errors": errors}
