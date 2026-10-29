@@ -63,4 +63,76 @@ push·PR은 아래 경로가 바뀔 때만 실행한다. 문서만 바꾼 커밋
 
 ## 검증 결과
 
-PR 단계 빌드 결과와 첫 배포 결과는 실행 후 이 절에 기록한다.
+2026-10-29에 확인했다(#29). 공개 주소 결과는 로컬 공식 QA([QA.md](QA.md))와 따로 기록한다. #2 완료 판정(로컬 기준)에 쓸지는 #2·#8에서 정한다.
+
+### PR 빌드 — [run 40861344584](https://github.com/kthss01/mini-danmaku-ai-claude/actions/runs/40861344584)
+
+- 대상: PR #26 head `67f2ae9`, `pull_request` 이벤트, 10:55~11:00 UTC
+- build 작업 성공: Linux 러너에서 `build-web.ps1` 빌드·패키징과 `check-web-assets.py --require-wasm --verify-hashes`가 통과했다.
+- deploy·verify는 PR이라 설계대로 건너뛰었다.
+
+### main 첫 배포 — [run 40862185693](https://github.com/kthss01/mini-danmaku-ai-claude/actions/runs/40862185693)
+
+- 대상: 머지 커밋 `0387c04`, `push` 이벤트, 11:01~11:06 UTC. build·deploy·verify 모두 성공했다.
+- 빌드 스크립트 실행: 11:02:10~11:05:54 UTC(약 3분 44초, `build-info.json` 기준)
+- verify: 배포 주소에 HTTP 요청 17건, 실패 0·오류 0·경고 0. 유효한 WASM(4,539,198 bytes, 섹션 11개), 리소스 529개(207.1 MiB), 디렉터리 index, `game/data/` 표본 3개, 없는 경로와 없는 `.wasm`의 404, `Cache-Control: max-age=600`을 확인했다. 스레드를 쓰지 않는 빌드라 COOP/COEP는 필요 없다.
+- 실행 주석: 세 작업 모두 같은 종류의 경고·알림이 붙었고, 이번 결과에는 영향이 없다.
+  - 경고: Node.js 20 대상 액션(`checkout@v4`, `configure-pages@v5`, `upload-artifact@v4`, `deploy-pages@v4`, `download-artifact@v4`)을 Node.js 24로 강제 실행한다.
+  - 알림: `ubuntu-latest`가 Ubuntu 26으로 바뀌는 중이다. 이번 실행은 Ubuntu 24.04 이미지(20261025.353)였다.
+
+### 공개 주소 응답 (11:25 UTC)
+
+| 경로 | 응답 |
+| --- | --- |
+| `/` | 200 `text/html`. meta refresh와 `location.replace`로 `game/index.html`로 넘긴다 |
+| `/game/`, `/game/index.html` | 200 `text/html` |
+| `/COPYING.txt`, `/game/COPYING.txt` | 200 `text/plain`, 2,478 bytes, 두 파일 내용 같음 |
+| `/build-info.json` | 200 `application/json` |
+| `/game/taisei.js` | 200 `application/javascript` |
+| `/game/taisei.wasm` | 200 `application/wasm` |
+| 없는 경로 | 404 |
+
+404를 뺀 응답은 모두 `Cache-Control: max-age=600`이다.
+
+공개된 `build-info.json`의 내용은 다음과 같다.
+
+- 커밋: Taisei `f59212b72df3b68459b4677a6200e42be700078a`, 메인 저장소 `0387c04a39ed3cb240f016a69c9431a4d8b66c50`(build·packaging 같음)
+- dirty 목록 4개(`build.repositoryDirtyEntries`, `build.taiseiWorktreeDirtyEntries`, `packaging.repositoryDirtyEntries`, `packaging.webShellDirtyEntries`)가 모두 `[]`
+- Emscripten 5.0.3, 빌드 이미지 `taiseiproject/linux-toolkit:20260804@sha256:1104b4a5…`
+- 리소스 529개 217,186,447 bytes(내용 주소 방식), 사이트 파일 549개 222,407,196 bytes(`build-info.json` 제외)
+
+### 공개 주소 브라우저 플레이 (11:26~11:34 UTC)
+
+- 환경: Windows 11 Home, Claude 데스크톱 앱 내장 브라우저(Chromium 152.0.7977.167), 패널이 화면에 보이는 상태. 사람이 조작한 Chrome이 아니다.
+- 입력: 메뉴 이동과 Z·X·Esc는 브라우저 키 입력으로 한 번씩 눌렀다. 자동화 도구는 키를 누른 채 유지하지 못한다. 그래서 이동·연사·저속은 캔버스에 DOM 키 이벤트(`keydown` → 0.4~1.4초 → `keyup`)를 보내 확인했다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 시작 | "게임 시작" → "리소스를 미리 내려받는 중 (N/1016)" → 16초에 897/1016, 24초 안에 끝나고 인트로 컷신 시작 |
+| 메뉴 | 인트로를 Z로 넘김 → 메인 메뉴 → Start Story → Easy → 레이무(Yōkai Buster) |
+| 스테이지 진입 | Stage 1 "Misty Lake Encounter" 시작, BGM 제목 표시 |
+| 이동 | 오른쪽 0.7초 → 화면 오른쪽 끝, 왼쪽 1.4초 → 왼쪽 끝으로 이동 |
+| 공격 | Z를 누르는 동안 샷이 연속으로 나감 |
+| 저속 | Shift를 누르는 동안 캐릭터 둘레에 원형 표시가 나타남. 중앙 판정 점은 이 해상도에서 판별하지 않았다 |
+| 봄 | X → 스펠 카드 발동 연출, Spell Cards 3 → 2 |
+| 일시정지 | Esc → "Game Paused" 메뉴, Esc로 복귀 |
+| 게임 오버 | Continue, Restart the Game 동작 |
+| HUD FPS | 패널이 앞에 있을 때 59.88~60.03 fps. 다른 탭을 앞에 둔 동안은 3.72 fps(백그라운드 탭 갱신 억제, #28) |
+| 콘솔 | 읽을 수 있었던 최근 버퍼에는 오류가 없고, `FS.syncfs operations in flight at once` 경고만 반복됐다(#28). 앞선 674건은 버퍼에서 밀려나 읽지 못했다 |
+
+### 공개망 조건
+
+- **완전한 첫 방문이 아니었다.** 이 브라우저 프로필에는 같은 날 앞서 공개 주소를 열 때 생긴 저장 데이터(IndexedDB `/persistent`, 97.0 MB)가 있었다. 엔진은 캐시에 없는 리소스를 내려받아 `/persistent/res-cache/`에 저장했고, 확인을 마친 11:32 UTC에 사용량은 217.8 MB였다.
+- 시작 후 15초 동안 `game/data/` 244개, 70.6 MB를 HTTP/2로 받았다(Resource Timing 기준). 브라우저 타이밍 버퍼(250건)가 차서 그 뒤 요청은 집계하지 못했다. `taisei.wasm`은 압축 전송으로 1.7 MB(원본 4.5 MB)를 받았다.
+- 응답이 멈춘 연결(#28 stall)은 이번 실행에서 나타나지 않았다. fetch timeout을 설정하지 않은 상태 자체는 그대로다(#28).
+
+### 라이선스 고지
+
+- 루트와 `game/`의 `COPYING.txt`가 공개 주소에서 열린다(200 `text/plain`, 내용 같음, 브라우저에서 UTF-8로 표시).
+- 셸 하단 "라이선스 고지" 링크는 새 탭으로 `game/COPYING.txt`를 연다. 내장 브라우저가 자동 입력으로 여는 새 탭을 막아, 링크 주소로 직접 이동해 열리는 것을 확인했다.
+- `COPYING.txt`에는 Taisei 코드 라이선스(MIT 형식), 사운드트랙(Tuck V, CC-BY 4.0)과 캐릭터 초상화(afensorm, CC-BY 4.0)의 출처·링크, 배경 사진 출처가 있다. [WEB_SETUP.md](../WEB_SETUP.md) 8절의 설명과 맞는다.
+
+### 확인하지 않은 것
+
+- 소리, 사람이 조작하는 Chrome에서의 FPS·창 전환(Alt+Tab)·전체 화면: #27
+- 저장 데이터가 없는 브라우저의 첫 방문 전체 다운로드 시간, Edge·Firefox, 게임패드: #28
