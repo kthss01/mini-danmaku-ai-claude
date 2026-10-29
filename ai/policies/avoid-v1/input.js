@@ -88,7 +88,7 @@ export function validateObs(obs) {
 	if (!(p.speed_normal > 0) || !(p.speed_focus > 0) || p.speed_focus > p.speed_normal + 1e-9) {
 		return fail('bad_player', 'speed');
 	}
-	for (const key of ['deathtime', 'respawntime', 'recoverytime', 'bomb_endtime']) {
+	for (const key of ['bombs', 'deathtime', 'respawntime', 'recoverytime', 'bomb_endtime']) {
 		if (!Number.isFinite(p[key])) {
 			return fail('bad_player', key);
 		}
@@ -107,6 +107,18 @@ export function validateObs(obs) {
 		}
 	}
 
+	// 탄 크기(지름)는 음수일 수 없다. 0은 충돌 형상이 없는 탄이라 위험 목록에서 빼고 보수 동작으로 표시한다.
+	let degenerate = 0;
+
+	for (let i = 0; i < b.n; i++) {
+		if (b.wx[i] < 0 || b.wy[i] < 0) {
+			return fail('bad_size', `bullets[${i}]`);
+		}
+		if (b.wx[i] === 0 || b.wy[i] === 0) {
+			degenerate++;
+		}
+	}
+
 	const hasMove = arr(b, 'vx', b.n) !== null && arr(b, 'vy', b.n) !== null &&
 		arr(b, 'ax', b.n) !== null && arr(b, 'ay', b.n) !== null &&
 		arr(b, 'ret_re', b.n) !== null && arr(b, 'ret_im', b.n) !== null;
@@ -120,6 +132,14 @@ export function validateObs(obs) {
 	}
 
 	const hasAttr = hasMove && ['attr_re', 'attr_im', 'attr_x', 'attr_y', 'attr_exp'].every(k => arr(b, k, b.n) !== null);
+
+	if (hasAttr) {
+		for (const key of ['attr_re', 'attr_im', 'attr_x', 'attr_y', 'attr_exp']) {
+			if (!allFinite(b[key], b.n)) {
+				return fail('non_finite', `bullets.${key}`);
+			}
+		}
+	}
 
 	const lasers = obs.lasers || { n: 0 };
 	const segs = obs.laser_segs || { n: 0 };
@@ -180,6 +200,7 @@ export function validateObs(obs) {
 		bullets: b,
 		hasMove,
 		hasAttr,
+		degenerate,
 		hasAge: arr(b, 'age', b.n) !== null,
 		hasId: arr(b, 'id', b.n) !== null,
 		hasFlags: arr(b, 'flags', b.n) !== null,

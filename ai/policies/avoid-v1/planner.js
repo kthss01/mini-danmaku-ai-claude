@@ -402,7 +402,7 @@ export class Planner {
 		}
 
 		// 시간이 모자라 이전 계획의 다음 단계만 확인하고 이어간 경우
-		if (mode === 'normal' && !finished && pick === this.prev && this.planValid && this.bestK[pick] === this.prevK) {
+		if (mode === 'normal' && !finished && this.planValid && ((pick === this.prev && this.bestK[pick] === this.prevK && this.prevK > 0) || (pick === 0 && this.prevK === 0 && this.bestK[0] === 0))) {
 			mode = 'reuse';
 		}
 
@@ -425,12 +425,15 @@ export class Planner {
 			return -1;
 		}
 
-		const c = this.prev;
+		// 남은 이동 프레임이 0이면 이전 계획의 다음 단계는 "정지"다. 정지 후보로 검증해 반환해야
+		// 검증한 경로의 첫 걸음과 실제로 내는 입력이 같다.
+		const c = this.prev === 0 || this.prevK <= 0 ? 0 : this.prev;
+		const k = c === 0 ? 0 : this.prevK;
 		const sp = candFocus(c) ? P.speed_focus : P.speed_normal;
-		this._rollout(c, c === 0 ? 0 : this.prevK, sp, P);
+		this._rollout(c, k, sp, P);
 
 		if (this._sE > H && this._sM > H) {
-			this._store(c, this.prevK, this._sM, this._sE);
+			this._store(c, k, this._sM, this._sE);
 			return c;
 		}
 
@@ -446,6 +449,7 @@ export class Planner {
 		}
 
 		this.prev = c;
+		// 이동 후보는 항상 k ≥ 1 (k = 0 롤아웃은 정지 후보로만 평가한다)
 		this.prevK = c === 0 ? 0 : Math.max(0, k - 1);
 		this.planValid = true;
 	}

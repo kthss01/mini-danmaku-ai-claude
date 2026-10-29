@@ -210,7 +210,7 @@ export function init(config, host) {
 				});
 			}
 
-			const conservative = v.overflow !== 0 || scene.truncated;
+			const conservative = v.overflow !== 0 || scene.truncated || scene.degenerate > 0;
 
 			if (conservative) {
 				stats.conservative_frames++;
@@ -232,6 +232,8 @@ export function init(config, host) {
 					choice: candName(r.c),
 					s_exact: r.sE,
 					s_margin: r.sM,
+					// 검증한 경로의 첫 걸음(= 이 action을 적용한 뒤 플레이어 위치). 회귀 테스트가 실제와 비교한다
+					path1: [planner.pathX[r.c * (cfg.horizon + 1) + 1], planner.pathY[r.c * (cfg.horizon + 1) + 1]],
 					complete: r.complete,
 					relevant: scene.nb,
 					decision_ms: ms,

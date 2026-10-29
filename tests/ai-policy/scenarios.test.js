@@ -18,8 +18,9 @@ function runAll(name, make, extra = {}) {
 	for (const [pname, mod] of Object.entries(POLICIES)) {
 		out[pname] = SEEDS.map(seed => {
 			const scenario = Object.assign(make(seed), extra);
-			const policy = mod.init({}, { now: () => performance.now() });
-			const r = runEpisode({ policy, scenario, frames: FRAMES });
+			// 시계를 고정해 기기 부하와 무관하게 결과가 같게 한다(판단 시간은 아래 별도 테스트가 실제 시계로 잰다)
+			const policy = mod.init({}, { now: () => 0 });
+			const r = runEpisode({ policy, scenario, frames: FRAMES, now: () => 0 });
 			return { seed, survived: r.survived, frames: r.survived_frames, hit: r.hit, released: r.released_frames, stats: policy.stats() };
 		});
 	}

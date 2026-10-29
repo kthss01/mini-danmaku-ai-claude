@@ -70,6 +70,8 @@ export class Scene {
 		this.mscale = 1;
 		this.tVuln = 1;
 		this.truncated = false;
+		this.degenerate = 0; // 충돌 형상이 없는 탄(지름 0) 수: 위험 목록에서 빼고 보수 동작으로 표시
+		this.nonFinite = 0;
 		this.predFail = 0; // 이번 프레임에 규칙 위반이 관측된 근처 탄 수
 		this.trust = new Map(); // 탄 id → 최근 규칙 위반 프레임 목록
 		this.hz = 0;
@@ -143,6 +145,8 @@ export class Scene {
 
 		this.mscale = mscale;
 		this.truncated = false;
+		this.degenerate = v.degenerate;
+		this.nonFinite = 0;
 		this.predFail = 0;
 
 		// 이 프레임 이후 피격 가능해지는 시점(상대 프레임). 그 전의 피격은 점수에 넣지 않는다.
@@ -163,6 +167,10 @@ export class Scene {
 		let nc = 0;
 
 		for (let i = 0; i < n; i++) {
+			if (!(b.wx[i] > 0 && b.wy[i] > 0)) {
+				continue;
+			}
+
 			const dx = b.x[i] - px0;
 			const dy = b.y[i] - py0;
 			const rmax = Math.max(b.wx[i], b.wy[i]) * 0.5;
@@ -242,6 +250,17 @@ export class Scene {
 				}
 			} else {
 				this._fillExact(v, i, base);
+
+				if (!this._trajFinite(base)) {
+					// 인력 식이 발산하는 등 전개 결과가 유한하지 않으면 믿지 않고 외삽으로 대체한다
+					this.nonFinite++;
+					mode = MODE_EXTRAP;
+
+					for (let t = 1; t <= H; t++) {
+						this.trajX[base + t] = x + ex * t;
+						this.trajY[base + t] = y + ey * t;
+					}
+				}
 			}
 
 			// 크기·회전
@@ -374,6 +393,15 @@ export class Scene {
 		return err > this.cfg.trust.err_threshold;
 	}
 
+	_trajFinite(base) {
+		for (let t = 1; t <= this.H; t++) {
+			if (!Number.isFinite(this.trajX[base + t]) || !Number.isFinite(this.trajY[base + t])) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// 원본 move_update를 H번 되풀이해 Q(1..H)를 채운다
 	_fillExact(v, i, base) {
 		const b = v.bullets;
@@ -431,20 +459,26 @@ export class Scene {
 	// 충전 단계에서는 시작 시점을 알 수 없어 null(활성 시점 모름)을 돌려준다.
 	_estimateActivation(key, width, frame) {
 		const prev = this.laserWidth.get(key);
-		this.laserWidth.set(key, { frame, width });
+		const rec = { frame, width, slope: NaN };
+		this.laserWidth.set(key, rec);
 
 		if (!prev || prev.frame !== frame - 1 || !Number.isFinite(width)) {
 			return null;
 		}
 
 		const slope = width - prev.width;
+		rec.slope = slope;
 
-		if (width <= 2.0001 || slope < 0.25) {
+		// 폭이 직선으로 늘어나는 확장 단계가 두 번 연속 같은 기울기로 관측될 때만 믿는다.
+		// 다른 종류의 레이저(원본 laser_charge가 아닌 폭 변화)에는 맞지 않을 수 있으므로
+		// 그 밖의 경우는 활성 시점을 모르는 것으로 보고 즉시 위험으로 다룬다.
+		if (width <= 2.0001 || slope < 0.25 || !(Math.abs(slope - prev.slope) <= 0.1 * slope + 0.05)) {
 			return null;
 		}
 
 		const target = slope * 20;
-		const frames = Math.ceil((0.6 * target - width) / slope);
+		// 구간(laser_segs)은 한 틱 앞이라 한 프레임 일찍 활성이 된다고 본다
+		const frames = Math.ceil((0.6 * target - width) / slope) - 1;
 		return { act: Math.max(1, frames), targetRadius: Math.max(target * 0.5 - 4, 2) };
 	}
 
@@ -671,10 +705,18 @@ export class Scene {
 					code = HIT_EXACT;
 				}
 
-				const d = ucapsuleDist(x1, y1, ax, ay, bx, by, ra, rb);
+				let d = ucapsuleDist(x1, y1, ax, ay, bx, by, ra, rb);
+				let degenerate = false;
+
+				if (d !== d) {
+					// 길이 0 구간이거나 반지름 차가 구간 길이보다 큰 퇴화 형상: 원본 식은 NaN이라 피격으로 세지 않는다.
+					// 확정 피격은 원본과 같게 두고, 여유 판정·비용은 가장 큰 반지름의 원으로 보수 근사한다.
+					degenerate = true;
+					d = Math.sqrt(segOriginDist2(ax - x1, ay - y1, bx - x1, by - y1)) - (ra > rb ? ra : rb);
+				}
 
 				if (vuln) {
-					if (d < 0) {
+					if (d < 0 && !degenerate) {
 						code = HIT_EXACT;
 					} else if (code < HIT_MARGIN && d < mS) {
 						code = HIT_MARGIN;

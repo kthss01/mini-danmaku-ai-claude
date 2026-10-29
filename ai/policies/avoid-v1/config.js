@@ -69,7 +69,9 @@ function merge(base, over, path) {
 			}
 			out[key] = merge(b, o, `${path}${key}.`);
 		} else if (Array.isArray(b)) {
-			if (!Array.isArray(o) || o.length !== b.length || !o.every(Number.isFinite)) {
+			const variable = key === 'rollout_stop_after';
+
+			if (!Array.isArray(o) || (!variable && o.length !== b.length) || !o.every(Number.isFinite)) {
 				throw new Error(`config.${path}${key}: 숫자 ${b.length}개 배열이어야 한다`);
 			}
 			out[key] = o.slice();
@@ -106,6 +108,9 @@ export function resolveConfig(user) {
 	}
 	if (cfg.on_frame_gap !== 'halt' && cfg.on_frame_gap !== 'reset') {
 		throw new Error("config.on_frame_gap: 'halt' 또는 'reset'이어야 한다");
+	}
+	if (!cfg.rollout_stop_after.every(k => Number.isInteger(k) && k >= 1)) {
+		throw new Error('config.rollout_stop_after: 1 이상 정수 배열이어야 한다(0 이하는 정지 롤아웃과 구분되지 않는다)');
 	}
 	if (!Number.isInteger(cfg.max_relevant) || cfg.max_relevant < 1) {
 		throw new Error('config.max_relevant: 1 이상 정수여야 한다');
