@@ -392,6 +392,13 @@ class DirtyProvenanceTests(unittest.TestCase):
         self.assertIs(self.block([], build_taisei_dirty_entries=[" M src/a.c"])["dirty"], True)
         self.assertIs(self.block([], web_shell_dirty_entries=[" M web/game/shell.js"])["dirty"], True)
 
+    def test_packaged_ai_files_dirty_counts_only_when_packaged(self):
+        self.assertIs(self.block([], ai_packaged=True, ai_dirty_entries=[" M ai/bridge/taisei-ai-bridge.mjs"])["dirty"], True)
+        self.assertIsNone(self.block([], ai_packaged=True, ai_dirty_entries=None)["dirty"])
+        self.assertIs(self.block([], ai_packaged=True, ai_dirty_entries=[])["dirty"], False)
+        # ai/를 패키징하지 않은 빌드(이전 빌드)에서는 이 출처를 보지 않는다.
+        self.assertIs(self.block([], ai_packaged=False, ai_dirty_entries=None)["dirty"], False)
+
     def test_dirty_runner_checkout_counts(self):
         self.assertIs(self.block([" M scripts/ai/run.py"])["dirty"], True)
 
