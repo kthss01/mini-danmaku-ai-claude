@@ -222,9 +222,9 @@ artifacts/runs/<run_id>/            # run_id = YYYYMMDDTHHMMSSZ-<6hex>, artifact
 - **세션 4(#23, 평가)**: 에피소드 파일의 `schema` 문자열 확정, `run.reason`에 실행기가 쓰는 `smoke_duration`(평가 제외용)과 `wall_timeout`·`runner_error`·`user_abort` 허용, `evidence.events`(JSONL)를 입력으로 사용.
 - **세션 3(#22, 정책)**: 정책 이름(`--policy`)으로 정책을 불러오는 방식과 `window.taiseiAIRun.policy.params` 사용.
 
-## 11. gitlink 갱신 절차 (AI 단계에서는 세션 1만)
+## 11. gitlink 갱신과 ai/** 패키징 (AI 단계에서는 세션 1만)
 
 1. 최신 `origin/main`의 `game/taisei` gitlink와 fork(`kthss01/taisei`) `master`의 머지 커밋을 확인한다. 다른 작업(프롤로그 건너뛰기·자동 발사·한국어·캐릭터 이미지)이 머지한 fork 변경을 되돌리지 않는다.
 2. 갱신 대상은 세션 2의 브리지 fork PR 머지 커밋을 포함한 최신 fork `master` 커밋이다.
 3. gitlink 갱신 PR에 웹 재빌드 회귀(릴리스·개발자 빌드, `scripts/check-web-assets.py`, 실행기 smoke)를 함께 보고한다.
-4. 같은 PR에서 `build-web.ps1`이 `ai/bridge/taisei-ai-bridge.mjs`를 `site/game/ai/bridge/`로, `ai/policies/<id>/`를 `site/game/ai/policies/<id>/`로 패키징하게 한다(세션 5 호스트 API가 이 위치를 가정한다. 셸 파일 `web/game/ai-host.js`는 이미 `web/game/` 복사에 포함되어 `webShellSha256`에 들어간다). 어댑터·정책 파일 해시도 `build-info.json`에 남긴다. 이 PR은 계약 PR #39와 정책 PR #45가 머지된 뒤에 한다.
+4. `build-web.ps1`은 `ai/bridge/taisei-ai-bridge.mjs`를 `site/game/ai/bridge/`로, `ai/policies/**`(`.js`·`.mjs`·`.json`)를 `site/game/ai/policies/**`로 패키징한다(세션 5 호스트 API가 이 위치를 가정한다. 셸 파일 `web/game/ai-host.js`는 `web/game/` 복사에 포함되어 `webShellSha256`에 들어간다). `build-info.json`의 `packaging`에 `aiPackaged`, `aiDirtyEntries`(`ai/`의 미커밋 변경), `aiSha256`(패키징한 파일별 해시)을 남기고, 패키징된 ai 파일의 dirty는 `code.dirty` 합산(`dirty_sources.packaged_ai_files`)에 들어간다. `ai/bridge/`가 없는 브랜치에서는 건너뛰고 `aiPackaged: false`로 남긴다.

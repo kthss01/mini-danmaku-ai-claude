@@ -50,6 +50,10 @@ Set-Location mini-danmaku-ai-claude
 4. 출처 기록과 install의 `taisei.html`, `taisei.js`, `taisei.wasm`, `COPYING.txt` 해시, 그리고 `data/` 전체 목록·크기·해시가 일치하는지 확인한다. 실패하면 기존 `site/`를 보존한다.
 5. `build/web/site`를 구성하고 필수 파일이 없으면 실패한다. `build-info.json`에 빌드 출처와 이번 패키징 정보를 분리해 기록한다.
 
+### AI 어댑터·정책 패키징
+
+`ai/bridge/taisei-ai-bridge.mjs`와 `ai/policies/**`가 있으면 `site/game/ai/bridge/`, `site/game/ai/policies/**`로 복사하고 `build-info.json`의 `packaging.aiPackaged`·`aiDirtyEntries`·`aiSha256`에 기록한다(릴리스·개발자 빌드 공통). 세부는 [docs/ai/RUNNER.md](../ai/RUNNER.md) 11절.
+
 ### 개발자 빌드 (AI 실험용)
 
 `-Flavor developer`는 같은 절차를 `build/web-dev/`에 `-Ddeveloper=true`로 실행한다. 릴리스 산출물(`build/web/**`)과 출처 기록은 바꾸지 않는다. `build-info.json`의 `build`에 `flavor`, `mesonOptions`, `rulesPreserved`(개발자 빌드는 검증 전까지 `unverified`)가 기록된다. 자세한 계약과 사용은 [docs/ai/RUNNER.md](../ai/RUNNER.md)를 본다. `git worktree`로 만든 작업 폴더에서는 `game/taisei/.git`이 컨테이너 밖을 가리켜 Docker 빌드가 실패하므로 일반 clone에서 빌드한다.
