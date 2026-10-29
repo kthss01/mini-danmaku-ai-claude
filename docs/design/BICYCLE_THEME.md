@@ -190,6 +190,20 @@ Cirno 교체에 필요한 것:
 | 웹 빌드 | Taisei `7854b7e1`, 5분 6초, 정적 검사 통과(리소스 540개). `taisei.wasm`에 새 문자열이 있고 옛 문자열(`Thermodynamic Ice Fairy` 등)은 없음. 한국어 `.mo`(data `53a5ae1e…`)에 `미니벨로`·`접이식 자전거 장난꾸러기`·`따르릉` 포함 |
 | 미확인 | 실제 화면(대화·HUD 이름·스펠 컷인·미디어룸 프로필·한국어 표시)은 세션 패널이 열려 있지 않아 게임을 제 속도로 돌릴 수 없어 확인하지 못했다. 로컬 서버(`http://127.0.0.1:8112/`, 세션이 살아 있는 동안) 또는 머지 뒤 공개 주소에서 사람이 Story 모드 스테이지 1 보스 전까지 플레이해 확인한다. 미디어룸 프로필은 스테이지 1 보스 BGM 해금 뒤에 보인다 |
 
+### 10.1 콘셉트 시트에서 임시 그림 추출 (2026-10-30)
+
+사용자 결정으로 정식 투명 PNG를 기다리지 않고 콘셉트 시트(`docs/design/concepts/*.webp`, 1536×1024)에서 바로 잘라 **임시** 적용했다. 도구는 `scripts/theme/sheet_extract.py`(의존성: `pip install "rembg[cpu]" scipy Pillow numpy`, 첫 실행 때 isnet-anime 모델 176MB 내려받음. 긴 경로에서는 pip 설치가 실패하므로 `build/venv`처럼 짧은 경로의 가상환경을 쓴다).
+
+```powershell
+build\venv\Scripts\python.exe scripts\theme\sheet_extract.py docs\design\concepts\minivelo.webp --name cirno --fork game\taisei --bg-name minivelobg
+```
+
+- 패널 경계를 흰 테두리로 자동 감지(x=906, y=512), 전신 패널을 isnet-anime로 배경 제거한 뒤 가장 큰 연결 성분만 남겨 자전거·소품을 뺐다. 결과 컷아웃은 깨끗했다(`build/theme-extract/cirno_cutout.png`).
+- 초상화 640×1000(그림 600×873, 머리 위 여백 40), 표정 패치 3종은 같은 얼굴 영역(218,66 204×166)을 잘라 임시로 동일, 패배 변형도 같은 그림. 옛 `cirno*.alphamap.webp`는 삭제.
+- 전투 스프라이트 160×240 ×12(대기: 2px 호흡·1% 신축, 공격: ±4° 기울기·3% 확대 펄스). 스펠 배경 타일은 전투 패널의 캐릭터 없는 왼쪽 위 영역 1024×1024, `gfx/stage1/minivelobg.webp`로 두고 `stage1_draw_cirno_spellbg`가 참조.
+- 아틀라스 재생성: portraits 227초. common은 thorough 프리셋이라 오래 걸린다.
+- 한계: 표정이 한 가지, 자세가 일러스트 포즈(점프) 그대로, 스프라이트 애니메이션은 변형뿐이다. 정식 그림(9절 요청서)이 오면 같은 절차로 교체한다.
+
 이미지가 오면 쓰는 명령(저장소 루트, Pillow 필요):
 
 ```powershell
