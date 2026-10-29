@@ -8,6 +8,7 @@
 - `build-web.ps1`: 공식 CI 이미지·emsdk 5.0.3으로 웹(WebAssembly) 빌드 후 `build/web/site`로 패키징 ([docs/web/BUILD.md](../docs/web/BUILD.md))
 - `serve-web.py`: `build/web/site`를 `127.0.0.1:8080`으로 제공하는 로컬 HTTP 서버 ([docs/web/SERVING.md](../docs/web/SERVING.md))
 - `check-web-assets.py`: 웹 산출물의 참조·MIME·해시·HTTP 응답 검사 ([docs/web/SERVING.md](../docs/web/SERVING.md))
+- `ai/run.py`: AI 실험 실행기. 서버·브라우저를 띄워 에피소드를 시작·감시하고 결과를 `artifacts/runs/`에 저장 ([docs/ai/RUNNER.md](../docs/ai/RUNNER.md)). `build-web.ps1 -Flavor developer`는 실험용 개발자 빌드를 `build/web-dev/`에 만든다
 
 웹 버전 전체 절차는 [docs/WEB_SETUP.md](../docs/WEB_SETUP.md)를 따른다.
 

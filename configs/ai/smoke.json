@@ -1,0 +1,7 @@
+{
+  "experiment_id": "smoke-shell",
+  "mode": "smoke",
+  "smoke_duration_s": 10,
+  "build_flavor": "release",
+  "headless": true
+}
