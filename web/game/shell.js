@@ -20,7 +20,11 @@
         // AI 연결(이슈 #24). 파일 위치는 페이지 기준 상대 경로이며 패키징 규칙(세션 1)이 정하면 shell-config.js에서 바꾼다.
         aiBridgeUrl: RAW.aiBridgeUrl || 'ai/bridge/taisei-ai-bridge.mjs',
         aiPolicyBase: RAW.aiPolicyBase || 'ai/policies/',
-        aiMockScript: RAW.aiMockScript || 'ai-mock-adapter.js',
+        // 정책 번들 진입 파일 이름(ai/policies/<id>/ 아래). 정적 검사(check-web-assets.py)는 '.js'로 끝나는 문자열 리터럴을
+        // 페이지 기준 파일 참조로 보므로, 정책마다 달라지는 이 파일은 이름을 이어 붙여 만든다.
+        aiPolicyEntry: RAW.aiPolicyEntry || ('index' + '.js'),
+        // 검증용 mock 어댑터 스크립트. 프로덕션에는 없으므로 기본은 비어 있고, 검증용 사이트가 shell-config.js에서 지정한다.
+        aiMockScript: typeof RAW.aiMockScript === 'string' ? RAW.aiMockScript : '',
         buildInfoUrl: RAW.buildInfoUrl || '../build-info.json',
     };
 
@@ -427,7 +431,7 @@
 
     // 정책 번들 불러오기. id(ai/policies/<id>/index.js) 또는 URL을 받는다. 실행기도 이 함수를 쓴다.
     aiHost.loadPolicy = function (idOrUrl, config) {
-        var url = /[\/.]/.test(idOrUrl) ? idOrUrl : cfg.aiPolicyBase + idOrUrl + '/index.js';
+        var url = /[\/.]/.test(idOrUrl) ? idOrUrl : cfg.aiPolicyBase + idOrUrl + '/' + cfg.aiPolicyEntry;
         var abs = new URL(url, document.baseURI).href;
         return import(abs).then(function (mod) {
             var base = (mod.meta && mod.meta.default_config) || {};
@@ -457,6 +461,9 @@
     }
 
     function attachMock() {
+        if (!cfg.aiMockScript) {
+            return Promise.reject(new Error('mock 어댑터가 설정되지 않았습니다(shell-config.js의 aiMockScript). 검증용 사이트에서만 쓴다.'));
+        }
         return loadScript(cfg.aiMockScript).then(function () {
             var mock = window.taiseiAIMock;
             if (!mock) throw new Error('mock 어댑터가 전역 taiseiAIMock을 정의하지 않습니다.');

@@ -28,7 +28,7 @@
 | (없음) | 브리지가 게임에 있으면 자동으로 연결하고 AI 패널을 보여준다. 없으면 패널이 나타나지 않아 수동 플레이는 그대로다 |
 | `?ai=0` 또는 `off` | AI 연결을 시도하지 않는다 |
 | `?ai=1` | 브리지가 없어도 패널을 보여주고 사용 불가 사유를 알린다 |
-| `?ai=mock` | 검증용 mock 어댑터를 쓴다(실제 게임 입력이 아니다, 패널에 "mock 어댑터" 경고). `ai-mock-adapter.js`가 `game/`에 있어야 한다 |
+| `?ai=mock` | 검증용 mock 어댑터를 쓴다(실제 게임 입력이 아니다, 패널에 "mock 어댑터" 경고). 프로덕션 셸에는 mock 참조가 없고, 검증용 사이트가 `game/shell-config.js`에서 `aiMockScript: 'ai-mock-adapter.js'`를 지정하고 `tests/ai-integration/mock-adapter.js`를 그 이름으로 `game/`에 두어야 한다 |
 | `?policy=<id>` | `ai/policies/<id>/index.js` 정책 번들을 불러온다 |
 
 ## 3. 호스트 API `window.taiseiAI`
@@ -69,7 +69,7 @@
 | `submit.attempted / accepted / rejected / by_status / last_rejected` | 제출 시도와 결과 상태(`accepted`·`stale`·`dup`·`wrong_episode`·`not_active`·`future`·`no_stage`·`exception`). 거부는 집계만 하고 소유권을 바꾸지 않는다. 평가의 `quality.action_sync`는 어댑터 카운터를 쓰고 이 값은 호스트 쪽 보조 증거다 |
 | `releases`, `policy_suspends` | 정책 요청 횟수 |
 
-사유 코드 문자열은 CONTRACT 4.2절 14종이며 UI, `owner_state` 전환, 평가의 `run.reason_code`가 같은 값을 쓴다.
+사유 코드 문자열은 CONTRACT 4.2절 15종이며 UI, `owner_state` 전환, 평가의 `run.reason_code`가 같은 값을 쓴다.
 
 ### 실행기가 쓰는 순서(제안, 세션 1과 확정 대기)
 
@@ -128,18 +128,19 @@ await page.evaluate(() => taiseiAI.disable('host_request')); // 정리: 입력 �
 node --test tests/ai-integration/*.test.mjs
 ```
 
-화면 확인(무거운 빌드 없이): 이미 빌드된 `build/web/site` 사본을 자기 출력 폴더에 복사하고, 바꾼 셸 파일(`web/game/index.html`, `shell.js`, `shell.css`, `shell-config.js`, `ai-host.js`)과 `tests/ai-integration/mock-adapter.js`(`game/ai-mock-adapter.js`로 이름 변경)만 덮어쓴 뒤 `scripts/serve-web.py --root <출력 폴더>`로 열고 `game/index.html?ai=mock`을 연다. 원본 산출물 폴더는 바꾸지 않는다. 기록에는 어떤 산출물에 덮어썼는지 적는다.
+화면 확인(무거운 빌드 없이): 이미 빌드된 `build/web/site` 사본을 자기 출력 폴더에 복사하고, 바꾼 셸 파일(`web/game/index.html`, `shell.js`, `shell.css`, `shell-config.js`, `ai-host.js`)과 `tests/ai-integration/mock-adapter.js`(`game/ai-mock-adapter.js`로 이름 변경)만 덮어쓴 뒤 `game/shell-config.js`에 `aiMockScript: 'ai-mock-adapter.js'`를 더하고 `scripts/serve-web.py --root <출력 폴더>`로 열어 `game/index.html?ai=mock`을 연다. 덮어쓴 사본에도 `python scripts/check-web-assets.py --root <출력 폴더>`를 돌려 정적 검사를 통과하는지 확인한다(셸이 참조하는 파일이 사이트에 있어야 한다). 원본 산출물 폴더는 바꾸지 않는다. 기록에는 어떤 산출물에 덮어썼는지 적는다.
 
 mock 모드에서는 키보드의 게임 키가 사용자 키 전환(`user_input`)을, `Esc`가 일시정지(`pause`)를 흉내 낸다. 실제 게임에서는 브리지(C)가 처리한다. 콘솔에서 `taiseiAIMockAdapter.sim.*`로 일시정지·게임 오버·스테이지 종료·브리지 오류를 재현할 수 있다.
 
-## 8. 패키징·서빙 (세션 1과 확정 대기)
+## 8. 패키징·서빙
 
-| 항목 | 현재 가정 |
+| 항목 | 규칙 |
 | --- | --- |
-| 어댑터 | `ai/bridge/taisei-ai-bridge.mjs` → `site/game/ai/bridge/taisei-ai-bridge.mjs` (`shell-config.js`의 `aiBridgeUrl`) |
-| 정책 | `ai/policies/<id>/` → `site/game/ai/policies/<id>/` (`aiPolicyBase`) |
+| 어댑터 | `ai/bridge/taisei-ai-bridge.mjs` → `site/game/ai/bridge/` (`scripts/build-web.ps1`, PR #49). 셸 기본값 `aiBridgeUrl`과 같다 |
+| 정책 | `ai/policies/**` → `site/game/ai/policies/<id>/` (`aiPolicyBase`, 진입 파일 `aiPolicyEntry`) |
 | 서버 MIME | `.mjs`는 `text/javascript`여야 모듈로 불러온다. `scripts/serve-web.py`는 이미 그렇게 고정되어 있다 |
 | 셸 파일 | `web/game/*`는 `build-web.ps1`이 `site/game/`에 통째로 복사한다(`ai-host.js` 포함). mock 어댑터는 패키징하지 않는다 |
+| 정적 검사 | `check-web-assets.py`는 `shell.js`의 `.js`/`.mjs` 문자열 리터럴을 페이지 기준 파일 참조로 본다. 사이트에 없는 파일을 가리키는 리터럴(예: mock 경로, `/`로 시작하는 조각)을 넣으면 CI가 실패한다 |
 
 위치가 달라지면 `web/game/shell-config.js`만 고친다.
 

@@ -48,6 +48,7 @@
         bridge_error: { kind: 'error', text: '브리지 오류로 수동 모드로 바뀌었습니다.' },
         game_over: { kind: 'info', text: '게임 오버(컨티뉴 화면)로 AI를 멈췄습니다. 컨티뉴를 쓰면 클리어로 인정하지 않습니다.' },
         not_playing: { kind: 'warn', text: '진행 중인 스테이지가 아니라서 시작하지 못했습니다. 스테이지에 들어간 뒤 재개를 눌러 주세요.' },
+        action_timeout: { kind: 'error', text: '정책 응답이 연속으로 끊겨 AI를 멈췄습니다(액션 누락 한도 초과). 정책과 호스트를 확인한 뒤 재개를 눌러 주세요.' },
     };
 
     // 호스트가 adapter.suspend/disable에 넘길 수 있는 사유. 브리지 자동 사유(pause, stage_end 등)는 호스트가 만들지 않는다.

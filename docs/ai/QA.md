@@ -92,3 +92,9 @@
 - 반영: 정책 action을 `taisei.ai.act/1`(`hold`·`edges`)로 통일하고 검사 추가, reset 실패·정책 교체·제출 거부 집계·통계 범위 명시(AI_SETUP 3절). 세션 3의 요청(PR #45, edges 필드)도 같은 변경으로 처리했다.
 - `node --test tests/ai-integration/*.test.mjs`: main 트리 33 통과 + 9 건너뜀(어댑터 없음). PR #39 `fd63e57` 어댑터를 둔 스크래치 트리 42 통과.
 - 모두 mock·fixture이며 실제 게임 결과가 아니다. 화면 확인(브라우저)은 이 변경 후 재실행하지 않았다(호스트 로직·검사 중심 변경, UI 문구 변경 없음).
+
+### 2026-10-30 CI 정적 검사 수정과 main 병합 후 재검증
+
+- PR #39·#45·#46·#49가 main에 머지되어 최신 main(`0dd55ec`)을 병합했다. 어댑터(`ai/bridge/`)가 main에 있으므로 호환 테스트가 건너뛰지 않고 실행된다.
+- 원인(PR #42 CI): 셸의 mock 경로 기본값과 `'/index.js'` 조각이 정적 검사에 걸렸다. mock 참조를 프로덕션 셸에서 빼고(검증용 사이트가 `shell-config.js`에서 지정) 정책 진입 파일 이름을 이어 붙여 만들도록 고쳤다.
+- 확인: 패키징을 흉내 낸 사본(`mini-danmaku-ai-claude-ai5-out/site`에 `game/ai/`를 복사)에서 `check-web-assets.py --require-wasm` 통과(오류 0).
