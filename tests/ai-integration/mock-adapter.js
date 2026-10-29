@@ -205,6 +205,10 @@
                 if (owner === 1) setOwner(2, 'restart');
                 episodeId++; frame = 0; slot = null; appliedHold = 0;
             },
+            bumpEpisodeKeepActive: function () {
+                // 방어 경로 검증용: 계약상 새 에피소드는 ai_suspended(restart)이지만, ai_active인 채 episode_id만 바뀐 관측을 흉내 낸다
+                episodeId++; frame = 0; slot = null; appliedHold = 0;
+            },
             bridgeError: function () {
                 if (owner !== 0) setOwner(0, 'bridge_error');
             },
@@ -225,7 +229,7 @@
             decide: function () {
                 n++;
                 var dir = Math.floor(n / 90) % 2 === 0 ? HOLD.LEFT : HOLD.RIGHT;
-                return { hold: dir | HOLD.SHOT, bomb: 0, special: 0, request: null };
+                return { hold: dir | HOLD.SHOT, edges: 0, request: null };
             },
             reset: function () { n = 0; },
             describe: function () { return { id: 'mock-sweep', version: '0.0.0-mock' }; },

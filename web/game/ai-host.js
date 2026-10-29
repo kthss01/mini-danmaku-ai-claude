@@ -54,7 +54,32 @@
     var HOST_REASONS = ['focus_lost', 'dialog', 'host_request', 'policy_error', 'policy_deadline', 'observation_invalid'];
 
     var STATS_RING = 512;
+    var HOLD_MASK = 0x7f;   // UP=1 DOWN=2 LEFT=4 RIGHT=8 FOCUS=16 SHOT=32 SKIP=64 (CONTRACT 6.1)
+    var EDGE_MASK = 0x3;    // BOMB=1 SPECIAL=2
     var FRAME_BUDGET_MS = 1000 / 60;
+
+    function newStats() {
+        return {
+            count: 0, over_frame: 0, total_ms: 0, max_ms: 0, ring: [], ringPos: 0,
+            attempted: 0, accepted: 0, rejected: 0, byStatus: {}, lastRejected: null,
+            releases: 0, policy_suspends: 0,
+        };
+    }
+
+    // 정책 action(taisei.ai.act/1)을 검사한다. 동기 객체 { hold, edges, request }만 받는다.
+    // 문제가 있으면 문자열(사유)을 돌려주고, 없으면 null이다.
+    function validateAction(act) {
+        if (act === null || typeof act !== 'object') return '액션이 객체가 아닙니다.';
+        if (typeof act.then === 'function') return 'Promise(async 정책)는 지원하지 않습니다. decide는 동기여야 합니다.';
+        if (Array.isArray(act)) return '액션이 배열입니다.';
+        if (!Number.isInteger(act.hold) || act.hold < 0 || act.hold > HOLD_MASK) return 'hold가 0~' + HOLD_MASK + ' 정수 비트가 아닙니다: ' + act.hold;
+        if (!Number.isInteger(act.edges) || act.edges < 0 || act.edges > EDGE_MASK) return 'edges가 0~' + EDGE_MASK + ' 정수 비트가 아닙니다: ' + act.edges;
+        var req = act.request;
+        if (req !== null && req !== undefined) {
+            if (typeof req !== 'object' || (req.type !== 'release' && req.type !== 'suspend')) return 'request.type이 release/suspend가 아닙니다.';
+        }
+        return null;
+    }
 
     function percentile(sorted, q) {
         if (!sorted.length) return null;
@@ -90,7 +115,7 @@
         var readyResolve;
         var readyPromise = new Promise(function (resolve) { readyResolve = resolve; });
 
-        var stats = { count: 0, over_frame: 0, total_ms: 0, max_ms: 0, ring: [], ringPos: 0, actions: 0, releases: 0, policy_suspends: 0 };
+        var stats = newStats();
 
         function emit(event) {
             event.at = Date.now();
@@ -118,7 +143,7 @@
         }
 
         function resetStats() {
-            stats = { count: 0, over_frame: 0, total_ms: 0, max_ms: 0, ring: [], ringPos: 0, actions: 0, releases: 0, policy_suspends: 0 };
+            stats = newStats();
         }
 
         function decisionStats() {
@@ -130,8 +155,20 @@
                 max_ms: stats.count ? stats.max_ms : null,
                 mean_ms: stats.count ? stats.total_ms / stats.count : null,
                 over_frame: stats.over_frame,
+                // 통계 범위: p50/p95는 최근 window_size개 표본, count/mean/max/over_frame은 정책을 지정한 뒤 누적이다.
+                // 두 값은 같은 분포가 아니다. frame_budget_ms(16.7)는 한 프레임 전체 기준이며 정책 자체의 판단 예산
+                // (정책 config.budget_ms, 초안 4 ms)과 다르다. 정책 내부 예산 초과는 정책 stats()/meta.over_budget을 본다.
+                scope: 'p50/p95: last window_size samples; count/mean/max/over_frame: cumulative since policy set',
+                window_size: STATS_RING,
+                window_samples: stats.ring.length,
                 frame_budget_ms: FRAME_BUDGET_MS,
-                actions: stats.actions,
+                submit: {
+                    attempted: stats.attempted,
+                    accepted: stats.accepted,
+                    rejected: stats.rejected,
+                    by_status: JSON.parse(JSON.stringify(stats.byStatus)),
+                    last_rejected: stats.lastRejected,
+                },
                 releases: stats.releases,
                 policy_suspends: stats.policy_suspends,
             };
@@ -165,24 +202,56 @@
             }
         }
 
+        // reset이 실패하면 false다. 호출자는 제어를 시작·계속하지 않고 policy_error로 중단한다.
         function resetPolicy(why) {
             if (policy && typeof policy.reset === 'function') {
-                try { policy.reset(why); } catch (e) { /* reset 오류는 다음 decide에서 드러난다 */ }
+                try { policy.reset(why); } catch (e) {
+                    setError('policy_error', '정책 reset 실패(' + why + '): ' + (e && e.message ? e.message : e));
+                    return false;
+                }
             }
+            return true;
         }
 
-        function submitAction(ctl, act) {
-            var edges = (act.bomb ? 1 : 0) | (act.special ? 2 : 0);
-            ctl.submit({ hold: act.hold | 0, edges: edges });
-            stats.actions++;
+        // 제출 결과를 집계한다. accepted가 아니면 거부로 센다(stale·dup·wrong_episode·not_active 등).
+        function submitTo(ctl, hold, edges) {
+            var status;
+            stats.attempted++;
+            try {
+                status = ctl.submit({ hold: hold, edges: edges });
+            } catch (e) {
+                stats.rejected++;
+                stats.byStatus.exception = (stats.byStatus.exception || 0) + 1;
+                setError('bridge_error', '액션 제출 실패: ' + (e && e.message ? e.message : e));
+                safeCall(function () { adapter.disable('bridge_error'); });
+                return false;
+            }
+            stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
+            if (status === 'accepted') {
+                stats.accepted++;
+                return true;
+            }
+            stats.rejected++;
+            stats.lastRejected = { status: status, frame: ctl.frame, episode_id: ctl.episode_id };
+            return false;
         }
 
         // 브리지 동기 콜백. 캡처 직후 같은 틱 안에서 불리므로 정책 시간이 곧 프레임 시간에 포함된다.
         function frameDriver(obs, ctl) {
-            if (!policy || !obs || !obs.meta || obs.meta.owner !== 'ai_active') return;
+            if (!obs || !obs.meta || obs.meta.owner !== 'ai_active') return;
+            if (!policy) {
+                // 정책 없이 ai_active가 이어지면 이전 입력이 남는다. 호스트는 그 상태를 허용하지 않는다.
+                setError('policy_error', 'AI 동작 중 정책이 없습니다. 입력을 해제하고 수동으로 전환합니다.');
+                safeCall(function () { adapter.disable('policy_error'); });
+                return;
+            }
             if (lastEpisode !== obs.meta.episode_id) {
-                if (lastEpisode !== null) resetPolicy('episode');
+                var wasEpisode = lastEpisode !== null;
                 lastEpisode = obs.meta.episode_id;
+                if (wasEpisode && !resetPolicy('episode')) {
+                    safeCall(function () { adapter.disable('policy_error'); });
+                    return;
+                }
             }
             var act;
             var t0 = now();
@@ -194,8 +263,11 @@
                 return;
             }
             recordDecision(now() - t0);
-            if (!act || typeof act !== 'object') {
-                setError('policy_error', '정책이 올바르지 않은 액션을 돌려주었습니다.');
+            var problem = validateAction(act);
+            if (problem) {
+                // async 정책이 거부된 Promise를 돌려주면 미처리 거부가 남지 않게 흡수한다.
+                if (act && typeof act.then === 'function') { try { act.then(null, function () {}); } catch (e) { /* 무시 */ } }
+                setError('policy_error', '정책이 올바르지 않은 액션을 돌려주었습니다: ' + problem);
                 safeCall(function () { adapter.disable('policy_error'); });
                 return;
             }
@@ -203,22 +275,30 @@
             if (req && req.type === 'suspend') {
                 stats.policy_suspends++;
                 var reason = HOST_REASONS.indexOf(req.reason) !== -1 ? req.reason : 'policy_deadline';
-                submitAction(ctl, { hold: 0 });
+                submitTo(ctl, 0, 0);
                 safeCall(function () { adapter.suspend(reason); });
                 return;
             }
             if (req && req.type === 'release') {
                 stats.releases++;
-                ctl.submit({ hold: 0, edges: 0 });
+                submitTo(ctl, 0, 0);
                 return;
             }
-            submitAction(ctl, act);
+            submitTo(ctl, act.hold, act.edges);
         }
 
         function safeCall(fn) {
             try { return fn(); } catch (e) {
                 setError('bridge_error', '브리지 호출 실패: ' + (e && e.message ? e.message : e));
                 return undefined;
+            }
+        }
+
+        function releaseForPolicyChange() {
+            if (!adapter) return;
+            var s = safeCall(function () { return adapter.state(); });
+            if (s && s.owner && s.owner !== 'manual') {
+                safeCall(function () { adapter.disable('host_request'); });
             }
         }
 
@@ -281,7 +361,10 @@
             },
 
             // 정책 객체를 그대로 쓴다(호스트는 reset만 부른다).
+            // AI가 입력을 쥐고 있는 중(ai_active/ai_suspended)에 정책을 바꾸거나 없애면 먼저 입력을 해제하고 manual로
+            // 전환한다. 새 정책으로 이어 가려면 호출자가 명시적으로 enable()해야 한다(이전 입력을 유지하지 않는다).
             setPolicy: function (obj, info) {
+                releaseForPolicyChange();
                 disposePolicy();
                 policy = null;
                 policySource = obj ? { kind: 'object', obj: obj } : null;
@@ -294,6 +377,7 @@
             // 정책 번들 모듈(init(config, host) → policy)을 쓴다. enable마다 init하고 manual 전환 때 dispose한다.
             setPolicyModule: function (mod, config, info) {
                 if (!mod || typeof mod.init !== 'function') throw new Error('정책 모듈에 init()이 없습니다.');
+                releaseForPolicyChange();
                 disposePolicy();
                 policy = null;
                 policySource = { kind: 'module', mod: mod, config: config, url: info && info.url };
@@ -306,10 +390,13 @@
             enable: function () {
                 if (!adapter) return 'unavailable';
                 if (!policySource) return 'no_policy';
-                if (!ensurePolicyInstance()) return 'policy_error';
-                resetPolicy('enable');
-                lastEpisode = null;
                 lastError = null;
+                if (!ensurePolicyInstance()) return 'policy_error';
+                if (!resetPolicy('enable')) {
+                    disposePolicy();   // reset이 실패한 정책으로는 제어를 시작하지 않는다
+                    return 'policy_error';
+                }
+                lastEpisode = null;
                 safeCall(function () { adapter.setObserve(true); });
                 var res = safeCall(function () { return adapter.enable(); });
                 return res === undefined ? 'bridge_error' : res;
@@ -318,9 +405,12 @@
             resume: function () {
                 if (!adapter) return 'unavailable';
                 if (!policySource) return 'no_policy';
-                if (!ensurePolicyInstance()) return 'policy_error';
-                resetPolicy('resume');
                 lastError = null;
+                if (!ensurePolicyInstance()) return 'policy_error';
+                if (!resetPolicy('resume')) {
+                    safeCall(function () { adapter.disable('policy_error'); });  // 입력·대기 엣지 해제, 수동 전환
+                    return 'policy_error';
+                }
                 safeCall(function () { adapter.setObserve(true); });
                 var res = safeCall(function () { return adapter.resume(); });
                 return res === undefined ? 'bridge_error' : res;

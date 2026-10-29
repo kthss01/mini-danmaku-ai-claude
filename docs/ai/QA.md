@@ -38,6 +38,8 @@
 | AI-13 | 호스트 API 계약 | `taiseiAI.ready` → `loadPolicy` → `enable` → `state` → `disable` | 반환 코드·`state()` 필드가 `docs/AI_SETUP.md`와 같다 | mock·fixture(단위 27건) |
 | AI-14 | 오류 표시 | 정책 예외·잘못된 액션·정책 초기화 실패 | `manual`(`policy_error`), 오류 문구, 로그 `[AI]` 줄 | mock |
 | AI-15 | 공격 입력 정의 | 수동(`shot_inverted` 켬/끔)과 AI에서 공격이 어떻게 나가는지 | 수동: 반전은 물리 키에만. AI: `hold.SHOT`은 항상 공격 | 정의만 문서화(CONTRACT 6.1). 실제 미확인 |
+| AI-17 | 정책 reset 실패·정책 교체 | reset 예외(enable/resume/에피소드), 활성 중 `setPolicy(null)`·객체/모듈 교체, 교체 모듈 `init` 실패 | 제어를 시작·유지하지 않고 입력·슬롯을 해제해 `manual`. 새 정책은 명시적 `enable` 필요 | mock·fixture(단위·호환 테스트) |
+| AI-18 | 정책 action 검사와 전달 | `{hold, edges}`가 submit까지 그대로 가는지(BOMB/SPECIAL 포함), release/suspend 전달, Promise·배열·범위 밖 값 거부, 거부 제출 집계 | `policy_error`로 중단, 거부는 `submit.rejected`로 집계 | mock·fixture. 실제 정책 번들(`idle`·`simple-move`·`avoid-v1`, PR #45 `f8cdf8a`)을 PR #39 어댑터 fixture에 연결한 스모크 30프레임 모두 accepted(빈 관측이라 회피 성능이 아님, 저장소에는 넣지 않은 일회성 확인) |
 | AI-16 | 게임 모듈 abort·종료 때 해제 | 게임이 abort/exit 되는 경우 | 셸이 `disable('bridge_error' / 'host_request')`를 먼저 부른다 | 코드 경로만 구현. 미실행 |
 
 ### AI-2x 한 패턴 폐루프
@@ -75,7 +77,7 @@
 ### 2026-10-29 mock 검증 (셸 AI 연결 PR)
 
 - 기준: main `a32fa43`(PR #38 머지) 위의 `test/ai-integration`.
-- 호스트 단위·호환 테스트: `node --test tests/ai-integration/*.test.mjs` → main 트리에서 22 통과 + 5 건너뜀(어댑터 없음), PR #39 `fd63e57`의 어댑터·fixture를 둔 스크래치 트리에서 27 통과.
+- 호스트 단위·호환 테스트: `node --test tests/ai-integration/*.test.mjs` → main 트리에서 22 통과 + 5 건너뜀(어댑터 없음), PR #39 `fd63e57`의 어댑터·fixture를 둔 스크래치 트리에서 27 통과(Codex 검토 반영 뒤에는 아래 "수정 후 재검증"의 수치).
 - 화면 확인: main `acf9b62`(PR #34 이전) 기반의 기존 산출물 `mini-danmaku-ai-claude-qa2/build/web/site`를 자기 출력 폴더(`mini-danmaku-ai-claude-ai5-out/site`)에 복사하고, 이번 브랜치의 `web/game/{index.html,shell.js,shell.css,shell-config.js,ai-host.js}`와 `tests/ai-integration/mock-adapter.js`(`game/ai-mock-adapter.js`)만 덮어썼다. 원본 폴더는 바꾸지 않았다. 게임 wasm은 AI 브리지가 없는 기존 빌드(Taisei `a95dafae`)다.
 - 내장 브라우저(Claude 데스크톱 앱, 포트 8153)에서 확인(**DOM 이벤트 기반**이며 실제 키 입력이 아니다):
   - `?ai=mock`: 배지 `수동` → `AI 시작` 클릭 → `AI 동작 중`(적용 입력 18프레임, `missing` 1) → `정지`(슬롯 폐기) → `재개` → 게임 키 이벤트 → `수동`(`user_input`) → `Esc` → `AI 정지`(`pause`) → 재개 시도는 `not_playing`으로 유지 → 일시정지 해제 후에도 자동 재개 없음 → `blur` → `AI 정지`(`focus_lost`) → `focus` 뒤에도 자동 재개 없음 → `수동으로` → `수동`.
@@ -84,3 +86,9 @@
   - 파라미터 없음: AI 패널 숨김, `available: false`, 셸 오류 없음, HUD 표시.
   - `?ai=mock`에서 Z 키 이벤트(약 200 ms 간격)로 게임 인트로가 진행되어 키가 게임에 계속 전달됨.
 - 아직 하지 않은 것: 실제 브리지·정책·gitlink 연동, 실제 게임 입력, 리플레이, 오디오·저장 회귀, 실제 포커스 전환(자동화로 만들 수 없음), 전체 수동 플레이 QA.
+
+### 2026-10-30 Codex 검토(PR #42 head `18fcccd`) 반영 후 재검증
+
+- 반영: 정책 action을 `taisei.ai.act/1`(`hold`·`edges`)로 통일하고 검사 추가, reset 실패·정책 교체·제출 거부 집계·통계 범위 명시(AI_SETUP 3절). 세션 3의 요청(PR #45, edges 필드)도 같은 변경으로 처리했다.
+- `node --test tests/ai-integration/*.test.mjs`: main 트리 33 통과 + 9 건너뜀(어댑터 없음). PR #39 `fd63e57` 어댑터를 둔 스크래치 트리 42 통과.
+- 모두 mock·fixture이며 실제 게임 결과가 아니다. 화면 확인(브라우저)은 이 변경 후 재실행하지 않았다(호스트 로직·검사 중심 변경, UI 문구 변경 없음).

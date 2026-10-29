@@ -47,7 +47,27 @@
 | `state()` | 객체 | `mode`, `reason`, `reasonInfo`, `inStage`, `paused`, `episodeId`, `lastFrame`, `buildFlavor`, `rulesPreserved`, `policy`, `warnings`, `lastError`, `decision`(p50/p95/최대 판단 시간), `shotSemantics` 등 |
 | `onEvent(cb)` | 해제 함수 | `{type: 'transition' \| 'error' \| 'attach' \| 'policy' \| 'build' …}` |
 | `getAdapter()` | 어댑터 | 읽기(`read`/`snapshot`/`state`) 용도. 소유권은 위 메서드로 바꾼다 |
-| `decisionStats()` | 객체 | 판단 시간 분포와 프레임 예산(16.7 ms) 초과 횟수 |
+| `decisionStats()` | 객체 | 판단 시간과 제출 집계(아래 "통계 범위" 참조) |
+
+### 정책 action 형식(`taisei.ai.act/1`)과 검사
+
+호스트는 정책 `decide(obs)`가 **동기**로 돌려준 `{ hold, edges, request }`만 받는다. `hold`는 0~127 정수 비트(UP=1 DOWN=2 LEFT=4 RIGHT=8 FOCUS=16 SHOT=32 SKIP=64), `edges`는 0~3 정수 비트(BOMB=1 SPECIAL=2)이며 둘 다 필수다. 어댑터 `ctl.submit({ hold, edges })`에 **그대로** 전달한다(예전 `bomb`/`special` 필드는 받지 않는다). 이 규칙을 어기면 호스트는 그 프레임에 제출하지 않고 `manual`(`policy_error`)로 중단한다.
+
+- 거부 대상: Promise(async 정책, 거부된 Promise는 미처리 오류가 남지 않게 흡수), 배열·문자열, 범위 밖·소수 비트, `edges` 누락, 알 수 없는 `request.type`.
+- `request.release`: 그 프레임에 `submit({hold:0, edges:0})`(소유권 유지, 제어 중단이며 생존 보장 아님). `request.suspend`: `submit({hold:0, edges:0})` 뒤 `suspend(reason)`. 허용 사유(`focus_lost`·`dialog`·`host_request`·`policy_error`·`policy_deadline`·`observation_invalid`) 밖이면 `policy_deadline`.
+- `reset(why)` 실패: `enable`은 `policy_error`를 돌려주고 제어를 시작하지 않으며, `resume`·에피소드 경계에서의 실패는 입력·대기 엣지를 해제하고 `manual`(`policy_error`)로 중단한다. 실패한 reset 뒤에는 `decide`도 제출도 하지 않는다.
+- 정책 교체: AI가 `ai_active`/`ai_suspended`인 동안 `setPolicy`/`setPolicyModule`로 정책을 바꾸거나 없애면 **먼저 `disable('host_request')`로 입력을 해제하고 `manual`로 전환**한다. 새 정책은 `enable()`을 명시적으로 불러야 시작한다(이전 입력을 유지하지 않는다). dispose → init → reset 순서는 `enable`에서 일어난다. 모듈 `init` 실패는 `enable()`이 `policy_error`로 돌려주고 수동을 유지한다.
+- `ai_active`인데 정책이 없는 프레임이 오면(방어 경로) 입력을 해제하고 `manual`(`policy_error`)로 전환한다.
+
+### 통계 범위(`decisionStats()`)
+
+| 필드 | 범위 |
+| --- | --- |
+| `p50_ms`, `p95_ms` | 최근 `window_size`(512)개 표본. `window_samples`가 실제 표본 수 |
+| `count`, `mean_ms`, `max_ms`, `over_frame` | 정책을 지정(`setPolicy*`)한 뒤 누적. 위 두 분포와 같지 않다 |
+| `frame_budget_ms` | 16.67 — **한 프레임 전체** 기준이다. 정책 자체의 판단 예산(정책 `config.budget_ms`, 초안 4 ms)과 다르며, 정책 내부 예산 초과는 정책 `stats()`·`meta.over_budget`을 본다 |
+| `submit.attempted / accepted / rejected / by_status / last_rejected` | 제출 시도와 결과 상태(`accepted`·`stale`·`dup`·`wrong_episode`·`not_active`·`future`·`no_stage`·`exception`). 거부는 집계만 하고 소유권을 바꾸지 않는다. 평가의 `quality.action_sync`는 어댑터 카운터를 쓰고 이 값은 호스트 쪽 보조 증거다 |
+| `releases`, `policy_suspends` | 정책 요청 횟수 |
 
 사유 코드 문자열은 CONTRACT 4.2절 14종이며 UI, `owner_state` 전환, 평가의 `run.reason_code`가 같은 값을 쓴다.
 

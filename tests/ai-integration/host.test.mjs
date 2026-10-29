@@ -147,7 +147,7 @@ test('정책이 올바르지 않은 액션을 돌려주면 policy_error', () => 
 
 test('request.release는 hold 0을 제출하고 소유권은 유지한다', () => {
 	const { host, sim } = setup({ policy: false });
-	host.setPolicy({ decide: () => ({ hold: HOLD.LEFT, request: { type: 'release', reason: 'observation_invalid' } }) });
+	host.setPolicy({ decide: () => ({ hold: HOLD.LEFT, edges: 0, request: { type: 'release', reason: 'observation_invalid' } }) });
 	host.enable();
 	sim.tick(3);
 	assert.equal(host.state().mode, 'ai_active');
@@ -158,7 +158,7 @@ test('request.release는 hold 0을 제출하고 소유권은 유지한다', () =
 
 test('request.suspend는 ai_suspended(허용 사유)로 올린다', () => {
 	const { host, sim } = setup({ policy: false });
-	host.setPolicy({ decide: () => ({ hold: 0, request: { type: 'suspend', reason: 'policy_deadline' } }) });
+	host.setPolicy({ decide: () => ({ hold: 0, edges: 0, request: { type: 'suspend', reason: 'policy_deadline' } }) });
 	host.enable();
 	sim.tick(2);
 	const s = host.state();
@@ -174,7 +174,7 @@ test('정책 모듈은 enable마다 init하고 manual 전환 때 dispose한다',
 		meta: { id: 'counted', version: '1.0.0' },
 		init() {
 			inits++;
-			return { decide: () => ({ hold: 0 }), reset() {}, dispose() { disposes++; } };
+			return { decide: () => ({ hold: 0, edges: 0 }), reset() {}, dispose() { disposes++; } };
 		},
 	}, {}, { id: 'counted' });
 	assert.equal(host.state().policy.id, 'counted');
@@ -203,7 +203,7 @@ test('정책 모듈 init이 던지면 enable은 policy_error를 돌려주고 man
 test('episode가 바뀌면 정책 reset을 부른다', () => {
 	const { host, sim } = setup({ policy: false });
 	const resets = [];
-	host.setPolicy({ decide: () => ({ hold: 0 }), reset: (why) => resets.push(why) });
+	host.setPolicy({ decide: () => ({ hold: 0, edges: 0 }), reset: (why) => resets.push(why) });
 	host.enable();
 	sim.tick(2);
 	sim.newEpisodeWhileActive(); // ai_active → ai_suspended(restart)
@@ -251,7 +251,7 @@ test('판단 시간 통계(p50/p95/max)와 프레임 예산 초과 횟수', () =
 	const host = createHost({ now: () => t });
 	const adapter = createMockAdapter();
 	host.attach(adapter, 'mock');
-	host.setPolicy({ decide() { t += durations[i++ % durations.length]; return { hold: 0 }; } });
+	host.setPolicy({ decide() { t += durations[i++ % durations.length]; return { hold: 0, edges: 0 }; } });
 	host.enable();
 	adapter.sim.tick(6); // 첫 틱 포함 관측 6회
 	const d = host.decisionStats();
@@ -279,4 +279,206 @@ test('어댑터가 인터페이스를 지키지 않으면 attach가 거부한다
 test('shot 의미 표기: AI hold.SHOT은 항상 공격, 반전은 물리 키에만', () => {
 	const { host } = setup();
 	assert.deepEqual(host.state().shotSemantics, { aiHoldShot: 'always_attacking', manualInversion: 'physical_key_only' });
+});
+
+// ---------- Codex 검토(PR #42 head 18fcccd) 반영 회귀 ----------
+
+test('act/1: edges(BOMB/SPECIAL)가 어댑터 submit까지 그대로 전달된다', () => {
+	const { host, sim } = setup({ policy: false });
+	host.setPolicy({ decide: () => ({ hold: HOLD.SHOT, edges: 3, request: null }) });
+	host.enable();
+	sim.tick(3);
+	const ai = sim.appliedLog().filter((e) => e.source === 'ai' && !e.missing);
+	assert.ok(ai.length >= 1);
+	assert.ok(ai.every((e) => e.hold === HOLD.SHOT && e.edges === 3));
+	assert.ok(host.decisionStats().submit.accepted >= 2);
+});
+
+test('reset가 실패하면 enable은 policy_error이고 decide·제출이 일어나지 않는다', () => {
+	const { host, sim } = setup({ policy: false });
+	let decides = 0;
+	host.setPolicy({ decide() { decides++; return { hold: 36, edges: 0 }; }, reset() { throw new Error('reset failed'); } });
+	assert.equal(host.enable(), 'policy_error');
+	sim.tick(3);
+	const s = host.state();
+	assert.equal(s.mode, 'manual');
+	assert.match(s.lastError.message, /reset failed/);
+	assert.equal(decides, 0);
+	assert.equal(host.decisionStats().submit.attempted, 0);
+	assert.equal(sim.appliedHold(), 0);
+});
+
+test('resume 중 reset가 실패하면 입력을 해제하고 manual(policy_error)로 중단한다', () => {
+	const { host, sim } = setup({ policy: false });
+	let fail = false;
+	host.setPolicy({ decide: () => ({ hold: 36, edges: 0 }), reset() { if (fail) throw new Error('reset failed'); } });
+	host.enable();
+	sim.tick(2);
+	host.suspend('host_request');
+	fail = true;
+	assert.equal(host.resume(), 'policy_error');
+	const s = host.state();
+	assert.equal(s.mode, 'manual');
+	assert.equal(s.reason, 'policy_error');
+	assert.equal(sim.hasPendingSlot(), false);
+});
+
+test('에피소드 reset가 실패하면 그 프레임에 decide하지 않고 manual로 중단한다', () => {
+	const { host, sim } = setup({ policy: false });
+	let decides = 0;
+	let failReset = false;
+	host.setPolicy({ decide() { decides++; return { hold: 36, edges: 0 }; }, reset() { if (failReset) throw new Error('episode reset failed'); } });
+	host.enable();
+	sim.tick(2);
+	const before = decides;
+	failReset = true;
+	sim.bumpEpisodeKeepActive();   // ai_active인 채로 episode_id만 바뀐 관측(방어 경로)
+	sim.tick(1);
+	assert.equal(decides, before);
+	const s = host.state();
+	assert.equal(s.mode, 'manual');
+	assert.equal(s.reason, 'policy_error');
+	assert.match(s.lastError.message, /episode reset failed/);
+	assert.equal(sim.hasPendingSlot(), false);
+});
+
+test('활성 중 정책을 없애면 입력을 해제하고 manual로 전환한다(이전 입력 유지 없음)', () => {
+	const { host, sim } = setup();
+	host.enable();
+	sim.tick(3);
+	assert.notEqual(sim.appliedHold(), 0);
+	host.setPolicy(null);
+	const s = host.state();
+	assert.equal(s.mode, 'manual');
+	assert.equal(s.reason, 'host_request');
+	assert.equal(sim.hasPendingSlot(), false);
+	sim.tick(2);
+	const last = sim.appliedLog().pop();
+	assert.equal(last.source, 'physical');
+	assert.equal(last.hold, 0);
+	assert.equal(host.state().policy, null);
+});
+
+test('활성 중 정책 객체·모듈을 교체하면 manual이 되고 새 정책은 명시적 enable이 필요하다', () => {
+	const { host, sim } = setup();
+	host.enable();
+	sim.tick(2);
+	let disposes = 0;
+	host.setPolicyModule({
+		meta: { id: 'next', version: '2' },
+		init() { return { decide: () => ({ hold: 0, edges: 0 }), dispose() { disposes++; } }; },
+	}, {}, { id: 'next' });
+	assert.equal(host.state().mode, 'manual');
+	assert.equal(sim.hasPendingSlot(), false);
+	sim.tick(2);
+	assert.equal(sim.appliedLog().pop().source, 'physical');
+	assert.equal(host.enable(), 'ok');
+	sim.tick(2);
+	// 객체로 다시 교체 → 모듈 인스턴스 dispose, 다시 manual
+	host.setPolicy({ decide: () => ({ hold: 0, edges: 0 }) });
+	assert.equal(disposes, 1);
+	assert.equal(host.state().mode, 'manual');
+});
+
+test('교체한 정책 모듈의 init가 실패하면 enable은 policy_error이고 이전 정책은 쓰이지 않는다', () => {
+	const { host, sim } = setup();
+	host.enable();
+	sim.tick(2);
+	host.setPolicyModule({ init() { throw new Error('bad init'); } }, {}, { id: 'bad' });
+	assert.equal(host.state().mode, 'manual');
+	assert.equal(host.enable(), 'policy_error');
+	assert.equal(host.state().mode, 'manual');
+	assert.match(host.state().lastError.message, /bad init/);
+});
+
+test('잘못된 액션은 모두 policy_error로 중단한다(Promise·배열·hold/edges 범위·request)', async () => {
+	const unhandled = [];
+	const onUnhandled = (e) => unhandled.push(e);
+	process.on('unhandledRejection', onUnhandled);
+	try {
+		const bad = {
+			promise: () => Promise.reject(new Error('async reject')),
+			resolvedPromise: () => Promise.resolve({ hold: 0, edges: 0 }),
+			array: () => [],
+			string: () => 'left',
+			holdTooBig: () => ({ hold: 128, edges: 0 }),
+			holdFloat: () => ({ hold: 1.5, edges: 0 }),
+			holdMissing: () => ({ edges: 0 }),
+			edgesTooBig: () => ({ hold: 0, edges: 4 }),
+			edgesMissing: () => ({ hold: 0 }),
+			legacyBomb: () => ({ hold: 0, bomb: 1, special: 0 }),
+			requestType: () => ({ hold: 0, edges: 0, request: { type: 'explode' } }),
+		};
+		for (const [name, decide] of Object.entries(bad)) {
+			const { host, sim } = setup({ policy: false });
+			host.setPolicy({ decide });
+			host.enable();
+			sim.tick(2);
+			const s = host.state();
+			assert.equal(s.mode, 'manual', name);
+			assert.equal(s.reason, 'policy_error', name);
+			assert.equal(host.decisionStats().submit.attempted, 0, name);
+		}
+		await new Promise((r) => setTimeout(r, 20));
+		assert.deepEqual(unhandled, [], '미처리 Promise 거부가 남으면 안 된다');
+	} finally {
+		process.off('unhandledRejection', onUnhandled);
+	}
+});
+
+test('제출 시도·accepted·rejected를 구분해 집계하고 마지막 거부를 노출한다', () => {
+	const host = createHost();
+	const adapter = createMockAdapter();
+	const origOnFrame = adapter.onFrame;
+	let n = 0;
+	adapter.onFrame = (cb) => origOnFrame((obs, ctl) => cb(obs, {
+		...ctl,
+		submit: (a) => {
+			const real = ctl.submit(a);
+			n++;
+			return n % 2 === 0 ? 'wrong_episode' : real;   // 짝수 번째는 거부된 것으로 보고한다
+		},
+	}));
+	host.attach(adapter, 'mock');
+	host.setPolicy(createSweepPolicy());
+	host.enable();
+	adapter.sim.tick(6);
+	const sub = host.decisionStats().submit;
+	assert.equal(sub.attempted, 6);
+	assert.equal(sub.accepted + sub.rejected, sub.attempted);
+	assert.equal(sub.rejected, 3);
+	assert.equal(sub.by_status.wrong_episode, 3);
+	assert.equal(sub.last_rejected.status, 'wrong_episode');
+	assert.equal(host.state().mode, 'ai_active'); // 거부는 집계만 하고 소유권을 바꾸지 않는다
+});
+
+test('submit이 예외를 던지면 bridge_error로 manual 전환한다', () => {
+	const host = createHost();
+	const adapter = createMockAdapter();
+	const origOnFrame = adapter.onFrame;
+	adapter.onFrame = (cb) => origOnFrame((obs, ctl) => cb(obs, { ...ctl, submit() { throw new Error('bad action'); } }));
+	host.attach(adapter, 'mock');
+	host.setPolicy(createSweepPolicy());
+	host.enable();
+	adapter.sim.tick(2);
+	const s = host.state();
+	assert.equal(s.mode, 'manual');
+	assert.equal(s.reason, 'bridge_error');
+	assert.equal(host.decisionStats().submit.by_status.exception, 1);
+});
+
+test('통계 범위: p50/p95는 최근 창, count/max는 누적이며 범위를 API에 명시한다', () => {
+	const host = createHost();
+	const adapter = createMockAdapter();
+	host.attach(adapter, 'mock');
+	host.setPolicy(createSweepPolicy());
+	host.enable();
+	adapter.sim.tick(600);
+	const d = host.decisionStats();
+	assert.equal(d.count, 600);
+	assert.equal(d.window_size, 512);
+	assert.equal(d.window_samples, 512);
+	assert.match(d.scope, /last window_size samples/);
+	assert.match(d.scope, /cumulative/);
+	assert.equal(d.frame_budget_ms, 1000 / 60);
 });

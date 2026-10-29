@@ -84,3 +84,63 @@ test('실제 어댑터: 호스트 사유 코드는 모두 브리지 REASONS 안�
 	assert.deepEqual(Object.keys(REASON_INFO).sort(), [...REASONS].sort());
 	for (const r of HOST_REASONS) assert.ok(REASONS.includes(r), r);
 });
+
+test('실제 어댑터: edges(BOMB|SPECIAL)와 hold가 submit까지 그대로 전달된다', { skip }, async () => {
+	const { createBridge } = await import(bridgeUrl);
+	const { createMockModule } = await import(mockUrl);
+	const M = createMockModule();
+	const host = createHost();
+	host.attach(createBridge(M), 'real');
+	host.setPolicy({ decide: () => ({ hold: HOLD.SHOT | HOLD.LEFT, edges: 3, request: null }) });
+	host.enable();
+	M.__tick();
+	M.__tick();
+	const last = M.__state.calls.at(-1);
+	assert.equal(last.hold, HOLD.SHOT | HOLD.LEFT);
+	assert.equal(last.edges, 3);
+	assert.equal(host.decisionStats().submit.accepted >= 1, true);
+});
+
+test('실제 어댑터: request.release는 hold 0·edges 0을 제출하고 소유권을 유지한다', { skip }, async () => {
+	const { createBridge } = await import(bridgeUrl);
+	const { createMockModule } = await import(mockUrl);
+	const M = createMockModule();
+	const host = createHost();
+	host.attach(createBridge(M), 'real');
+	host.setPolicy({ decide: () => ({ hold: HOLD.LEFT, edges: 3, request: { type: 'release', reason: 'observation_invalid' } }) });
+	host.enable();
+	M.__tick();
+	M.__tick();
+	const last = M.__state.calls.at(-1);
+	assert.equal(last.hold, 0);
+	assert.equal(last.edges, 0);
+	assert.equal(host.state().mode, 'ai_active');
+});
+
+test('실제 어댑터: request.suspend는 hold 0 제출 뒤 ai_suspended(policy_deadline)로 올린다', { skip }, async () => {
+	const { createBridge } = await import(bridgeUrl);
+	const { createMockModule } = await import(mockUrl);
+	const M = createMockModule();
+	const host = createHost();
+	host.attach(createBridge(M), 'real');
+	host.setPolicy({ decide: () => ({ hold: HOLD.LEFT, edges: 3, request: { type: 'suspend', reason: 'policy_deadline' } }) });
+	host.enable();
+	M.__tick();
+	const s = host.state();
+	assert.equal(s.mode, 'ai_suspended');
+	assert.equal(s.reason, 'policy_deadline');
+	assert.equal(M.__state.slot, null);
+	const last = M.__state.calls.at(-1);
+	assert.equal(last.hold, 0);
+	assert.equal(last.edges, 0);
+});
+
+test('실제 어댑터: 활성 중 정책 교체는 슬롯을 비우고 manual로 전환한다', { skip }, async () => {
+	const { host, M } = await setup();
+	host.enable();
+	M.__tick();
+	assert.ok(M.__state.slot);
+	host.setPolicy(null);
+	assert.equal(host.state().mode, 'manual');
+	assert.equal(M.__state.slot, null);
+});
