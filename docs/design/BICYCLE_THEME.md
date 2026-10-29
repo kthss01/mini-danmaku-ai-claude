@@ -204,6 +204,22 @@ build\venv\Scripts\python.exe scripts\theme\sheet_extract.py docs\design\concept
 - 아틀라스 재생성: portraits 227초. common은 thorough 프리셋이라 오래 걸린다.
 - 한계: 표정이 한 가지, 자세가 일러스트 포즈(점프) 그대로, 스프라이트 애니메이션은 변형뿐이다. 정식 그림(9절 요청서)이 오면 같은 절차로 교체한다.
 
+### 10.2 나머지 4명 임시 적용 (2026-10-30)
+
+사용자 지시로 나머지 캐릭터도 같은 방식으로 넣었다. 보스 배치는 제안값이며 바꿀 수 있다.
+
+| 캐릭터 | 보스(내부 id) | 스프라이트 | 임시 이름 · 칭호 | 글로우/그림자 |
+| --- | --- | --- | --- | --- |
+| CLIMBER | 스테이지 2 보스 Hina (`hina`) | `hina` 12장 | CLIMBER · Mountain Pass Ascender (클라이머 · 고갯길의 등반가) | 연보라 |
+| RANDONNEUR | 스테이지 2 중간보스·3 보스 Wriggle (`wriggle`, `wriggleex`) | `wriggle` 18장, `wriggleex` 18장 | RANDONNEUR · Long-Distance Wayfarer (랑도너 · 장거리 여행자) | 남색/금색 |
+| CLASSIC | 스테이지 4 보스 Kurumi (`kurumi`) | `kurumi` 12장 | CLASSIC · Vintage Boulevard Lady (클래식 · 빈티지 대로의 숙녀) | 버건디 |
+| AERO | 스테이지 5 보스 Iku (`iku`) + 중간보스 `iku_mid` | `iku` 12장, `iku_mid` 1장 | AERO · Aero Road Sprinter (에어로 · 에어로 로드의 승부사) | 빨강 |
+
+- 표정 패치는 각 보스의 기존 표정 이름 전부(예: wriggle 6종)를 같은 얼굴로 만들어 대화 스크립트·프로필을 그대로 둔 채 동작한다. 패배 변형도 같은 그림. `wriggle`의 옛 알파맵 2개 삭제.
+- 시트에서 자전거가 캐릭터에 붙어 있어 `--char-box`로 잘라냈다(CLIMBER x≥0.30, RANDONNEUR x≥0.40, AERO x≥0.34, CLASSIC x 0.30~0.74 + `--rembg-full`). CLASSIC은 좁은 상자로 배경 제거를 돌리면 모델이 흐린 마스크를 내서 전체 패널로 제거한 뒤 자르는 옵션을 추가했다. RANDONNEUR·CLASSIC은 자전거 일부가 남는다.
+- 이번 `common` 아틀라스는 시간 때문에 빠른 프리셋(`--width=4096 --samples=0 --multiple`)으로 묶었다(thorough는 약 20분). 정식 그림을 넣을 때 thorough로 다시 묶는다.
+- 바꾸지 않은 것: 대사 본문(아직 원래 캐릭터 기준), 프로필 종족·전공·설명, 스펠 배경, 스테이지 6 Elly·엑스트라 Scuttle·Yumemi.
+
 이미지가 오면 쓰는 명령(저장소 루트, Pillow 필요):
 
 ```powershell
