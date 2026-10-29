@@ -254,7 +254,9 @@ python scripts/check-web-assets.py --root build/real-nested --url http://127.0.0
 
 결과: **통과 (오류 0, 경고 0)**. HTTP 검사 15건 성공. `game/taisei.wasm` → `application/wasm`, `game/data/` 529개 인식, `GET /game/` → 404(index 없음, 목록 비노출), 상대 경로가 하위 디렉터리에서도 그대로 풀린다. 실제 셸의 링크·경로는 세션 3 산출물로 확정된다.
 
-## 공개 배포 시 필요한 조건 (문서화만, 배포하지 않음)
+## 공개 배포 시 필요한 조건
+
+GitHub Pages 배포는 이 조건을 기준으로 한다. 절차는 [PAGES.md](PAGES.md)에 있다.
 
 | 조건 | 내용 |
 | --- | --- |

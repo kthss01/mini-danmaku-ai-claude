@@ -40,6 +40,7 @@ Taisei fork를 `game/taisei` Git submodule로 연결하고 Windows x64 원본 �
 
 - [구축 계획](docs/PROJECT_PLAN.md)
 - [웹 실행 안내](docs/WEB_SETUP.md)
+- [GitHub Pages 배포](docs/web/PAGES.md)
 - [웹 전환 계획](docs/WEB_PORT_PLAN.md)
 - [로컬 환경 구축 안내](docs/SETUP.md)
 - [문서 안내](docs/README.md)
@@ -49,6 +50,8 @@ Taisei fork를 `game/taisei` Git submodule로 연결하고 Windows x64 원본 �
 Windows PowerShell, Docker Desktop, Python 3을 사용합니다.
 
 ### 웹 버전
+
+빌드 없이 바로 플레이하려면 GitHub Pages 공개 주소 https://kthss01.github.io/mini-danmaku-ai-claude/ 를 엽니다([배포 안내](docs/web/PAGES.md)). 직접 빌드할 때는 다음 명령을 씁니다.
 
 ```powershell
 git clone --recurse-submodules https://github.com/kthss01/mini-danmaku-ai-claude.git

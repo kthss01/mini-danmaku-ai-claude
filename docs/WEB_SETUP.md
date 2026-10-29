@@ -91,6 +91,8 @@ http://127.0.0.1:8080/
 
 오류: 산출물이 없으면 종료 코드 2, 포트가 사용 중이면 종료 코드 3과 안내 문구를 출력한다. 자세한 동작은 [docs/web/SERVING.md](web/SERVING.md).
 
+빌드 없이 플레이하려면 GitHub Pages 공개 주소 https://kthss01.github.io/mini-danmaku-ai-claude/ 를 연다. `main`의 웹 관련 변경이 자동으로 빌드·배포된다. 배포 절차는 [docs/web/PAGES.md](web/PAGES.md)에 있다.
+
 ## 4. 조작
 
 | 동작 | 기본 키 |
@@ -150,7 +152,7 @@ http://127.0.0.1:8080/
 - **게임패드:** 웹 빌드에 게임패드 매핑 파일이 포함되지 않는다. 키보드만 검증했다.
 - **새 clone 직후 dirty 표시:** Git for Windows 기본 설정으로 clone하면 `setup-taisei.ps1` 뒤 `game/taisei`가 줄바꿈 차이로 수정됨으로 보이고 빌드 출처에 기록된다. 빌드 결과에는 영향이 없다. 수정 PR #25 검토 중([#4](https://github.com/kthss01/mini-danmaku-ai-claude/issues/4)).
 - **wasm 바이트 재현성:** 같은 커밋으로 빌드해도 `taisei.wasm` 해시는 매번 다를 수 있다. 크기와 `taisei.js` 해시는 같았다.
-- **로컬 전용:** 서버는 `127.0.0.1`에만 바인딩하는 개발용 HTTP/1.0 서버다. 공개 배포에 쓰지 않는다. 공개 호스팅 시 필요한 MIME·경로 조건은 [docs/web/SERVING.md](web/SERVING.md)를 참고한다. 공개 대상은 아직 정하지 않았다.
+- **로컬 전용:** 서버는 `127.0.0.1`에만 바인딩하는 개발용 HTTP/1.0 서버다. 공개 배포에 쓰지 않는다. 공개 호스팅 시 필요한 MIME·경로 조건은 [docs/web/SERVING.md](web/SERVING.md)를 참고한다. 공개 배포는 GitHub Pages로 한다([docs/web/PAGES.md](web/PAGES.md)).
 
 ## 8. 라이선스
 
@@ -164,5 +166,6 @@ Taisei 코드는 `COPYING.txt`의 허용적 라이선스(MIT 형식)를 따른�
 | [docs/web/RUNTIME.md](web/RUNTIME.md) | 런타임 구조, 입력·오디오·저장, fork 수정 |
 | [docs/web/SHELL.md](web/SHELL.md) | 웹 셸 상태 흐름, 입력·포커스 정책 |
 | [docs/web/SERVING.md](web/SERVING.md) | 서버 옵션, 자산 검사, 공개 배포 조건 |
+| [docs/web/PAGES.md](web/PAGES.md) | GitHub Pages 자동 빌드·배포 |
 | [docs/web/QA.md](web/QA.md) | QA 항목과 판정 |
 | [docs/SETUP.md](SETUP.md) | Windows 데스크톱 빌드 |

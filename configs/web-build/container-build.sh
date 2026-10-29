@@ -25,6 +25,10 @@ fi
 . "$EMSDK_DIR/emsdk_env.sh"
 emcc -v
 
+# Linux 호스트(GitHub Actions)에서는 마운트한 저장소의 소유자가 컨테이너 사용자(root)와 달라
+# Git 소유권 검사가 clone을 거부할 수 있다. 컨테이너 안에서만 쓰는 설정이므로 마운트 경로를 신뢰한다.
+git config --global --add safe.directory '*'
+
 # Windows CRLF 체크아웃의 영향을 받지 않도록 컨테이너 안에서 LF로 다시 checkout한다.
 git clone --recurse-submodules --no-local /workspace/game/taisei /tmp/taisei
 cd /tmp/taisei

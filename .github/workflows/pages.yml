@@ -1,0 +1,120 @@
+# Taisei 웹 빌드를 GitHub Pages로 배포한다.
+#
+# - main push: 빌드 → 정적 검사 → Pages 배포 → 배포 주소 HTTP 검사
+# - pull_request: 빌드와 정적 검사만 수행한다(배포하지 않음).
+# - workflow_dispatch: 수동 재배포(main에서 실행해야 github-pages 환경 정책을 통과한다).
+#
+# 빌드는 로컬과 같은 scripts/build-web.ps1을 Linux 러너의 pwsh로 실행해 산출물 계약(build/web/site)을 그대로 따른다.
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pages.yml'
+      - 'configs/web-build/**'
+      - 'game/taisei'
+      - 'scripts/build-web.ps1'
+      - 'scripts/check-web-assets.py'
+      - 'web/**'
+  pull_request:
+    paths:
+      - '.github/workflows/pages.yml'
+      - 'configs/web-build/**'
+      - 'game/taisei'
+      - 'scripts/build-web.ps1'
+      - 'scripts/check-web-assets.py'
+      - 'web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 배포가 겹치지 않도록 한 번에 하나만 실행한다. 진행 중인 배포는 취소하지 않는다.
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # game/taisei만 받는다. Taisei 내부 submodule은 빌드 컨테이너가 직접 받는다.
+          submodules: true
+
+      - name: Taisei 웹 빌드
+        shell: pwsh
+        run: ./scripts/build-web.ps1
+
+      - name: 산출물 정적 검사
+        run: python3 scripts/check-web-assets.py --root build/web/site --require-wasm --verify-hashes
+
+      - name: 빌드 정보 요약
+        if: always()
+        run: |
+          if [ -f build/web/site/build-info.json ]; then
+            python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          info = json.load(open('build/web/site/build-info.json', encoding='utf-8'))
+          b, s = info['build'], info['site']
+          print('### Taisei 웹 빌드')
+          print(f"- Taisei: `{b['taiseiCommit']}`")
+          print(f"- 메인 저장소: `{b['repositoryCommit']}`")
+          print(f"- Emscripten: `{b['emscriptenVersion']}`")
+          print(f"- 진입점: `{s['entry']}`, 파일 {s['fileCountExcludingBuildInfo']}개, {s['totalBytesExcludingBuildInfo'] / 1048576:.1f} MiB")
+          EOF
+          fi
+
+      - name: Pages 설정 확인
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: Pages 산출물 업로드
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web/site
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify:
+    # 배포된 주소에 실제로 요청해 상태 코드·MIME·404 동작을 확인한다.
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: build/web/artifact
+
+      - name: 배포 산출물 풀기
+        run: |
+          mkdir -p build/web/site
+          tar -xf build/web/artifact/artifact.tar -C build/web/site
+
+      - name: 배포 주소 HTTP 검사
+        env:
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+        run: python3 scripts/check-web-assets.py --root build/web/site --require-wasm --url "$PAGE_URL"

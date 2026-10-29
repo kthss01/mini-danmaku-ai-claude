@@ -22,10 +22,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$taiseiPath = Join-Path $repoRoot 'game\taisei'
-$configDir = Join-Path $repoRoot 'configs\web-build'
+# 하위 경로는 '/'로 적는다. Windows와 Linux(GitHub Actions의 pwsh) 모두에서 같은 경로가 된다.
+$taiseiPath = Join-Path $repoRoot 'game/taisei'
+$configDir = Join-Path $repoRoot 'configs/web-build'
 $webSourceDir = Join-Path $repoRoot 'web'
-$webBuildDir = Join-Path $repoRoot 'build\web'
+$webBuildDir = Join-Path $repoRoot 'build/web'
 $installPath = Join-Path $webBuildDir 'install'
 $provenancePath = Join-Path $webBuildDir 'install-provenance.json'
 $sitePath = Join-Path $webBuildDir 'site'
