@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AI 실행기 fixture</title>
+<!--
+  실제 게임이 아니다. 웹 셸(window.taiseiShell)과 브리지 호스트 API(window.taiseiAI)가 있는 것처럼
+  행동하는 모의 페이지로, 실행기의 시작·감시·수집·정리를 게임 없이 검증하는 데만 쓴다.
+  동작은 window.taiseiAIRun.policy.name(실행기가 넘기는 값)으로 고른다:
+    fixture-idle      max_frames에서 episode_end(frame_limit)로 끝난다
+    fixture-hang      끝나지 않는다(벽시계 한도 검증)
+    fixture-crash     enable 직후 셸이 error 상태가 된다
+    fixture-leak      disable해도 입력이 풀리지 않는다(누수 검출 검증)
+    fixture-artifact  artifact 이벤트(base64 조각 2개)를 보내고 끝난다
+    fixture-nobridge  window.taiseiAI가 없다
+    fixture-stageend  episode_end 이벤트 없이 owner_state=ai_suspended/stage_end(정수 코드)로 끝난다(브리지 파생 종료)
+    fixture-framecap  끝나는 신호 없이 프레임만 계속 늘어난다(실행기의 frame_limit 감지)
+    fixture-userkey   enable 뒤 owner_state=manual/user_input이 된다(사용자 키 개입 → aborted)
+    fixture-notplaying enable이 거부되어 ai_suspended/not_playing이 된다(스테이지 아님 → error)
+    fixture-badpolicy loadPolicy가 실패한다(정책 번들을 찾을 수 없음 → error/policy_error)
+    (호스트 API 모양은 PR #42: ready·loadPolicy·enable()의 반환 코드·state().mode/reason/lastFrame. --policy none이면 정책 없이 enable)
+    fixture-stuck     셸이 loading에서 넘어가지 않는다(시작 한도 검증)
+-->
+<div id="error-message"></div><div id="error-detail"></div>
+<button id="start" style="width:200px;height:60px">시작</button>
+<canvas id="canvas" width="64" height="64"></canvas>
+<script>
+(function () {
+  var run = window.taiseiAIRun || { policy: { name: 'fixture-idle' }, limits: { max_frames: 120 } };
+  var mode = run.policy.name;
+  var shell = window.taiseiShell = { state: 'ready', logLines: ['[SHELL] state: ready'], errors: [] };
+  function setState(s) { shell.state = s; shell.logLines.push('[SHELL] state: ' + s); }
+
+  document.getElementById('start').addEventListener('click', function () {
+    if (shell.state !== 'ready') return;
+    setState('loading');
+    if (mode === 'fixture-stuck') return;
+    setTimeout(function () { setState('playing'); console.log('fixture: first frame'); }, 200);
+  });
+
+  if (mode === 'fixture-nobridge') return;
+
+  var listeners = [];
+  var OWNER = { manual: 0, ai_active: 1, ai_suspended: 2 };
+  var REASON = { none: 0, stage_end: 4, user_input: 7, not_playing: 13 };
+  // 기본은 호스트 API(PR #42)의 state() 모양(mode·reason·lastFrame·episodeId). stageend만 어댑터 모양(정수 코드)이다.
+  var adapterShape = (mode === 'fixture-stageend');
+  var st = adapterShape
+    ? { owner_state: 0, owner_reason: 0, last_frame: 0, episode_id: 1 }
+    : { mode: 'manual', reason: 'none', lastFrame: 0, episodeId: 1, buildFlavor: 'fixture',
+        input: { hold: 0, pending_edges: 0, queued_actions: 0 } };
+  function setOwner(owner, reason) {
+    if (adapterShape) { st.owner_state = OWNER[owner]; st.owner_reason = REASON[reason]; }
+    else { st.mode = owner; st.reason = reason; }
+  }
+  function setFrame(f) { st.frame = f; if (adapterShape) st.last_frame = f; else st.lastFrame = f; }
+  var policyLoaded = false;
+  var timer = null, maxFrames = 0, chunks = 0;
+  function emit(e) { listeners.forEach(function (cb) { cb(e); }); }
+
+  window.taiseiAI = {
+    ready: Promise.resolve({ ready: true }),
+    loadPolicy: function (id, config) {
+      if (id === 'fixture-badpolicy') return Promise.reject(new Error('정책 번들을 찾을 수 없음'));
+      policyLoaded = true; emit({ type: 'policy', id: id });
+      return Promise.resolve({ id: id, config: config });
+    },
+    enable: function (opts) {
+      maxFrames = (opts && opts.limits && opts.limits.max_frames) || 120;
+      if (!policyLoaded && run.policy.name !== 'none') return 'no_policy';
+      if (mode === 'fixture-notplaying') {
+        setOwner('ai_suspended', 'not_playing');
+        emit({ type: 'transition', mode: 'ai_suspended', reason: 'not_playing', lastFrame: st.frame || 0 });
+        return 'not_playing';
+      }
+      setOwner('ai_active', 'none');
+      if (st.input) st.input.hold = 3;
+      emit({ type: 'transition', mode: 'ai_active', reason: 'none', lastFrame: st.frame || 0 });
+      if (mode === 'fixture-userkey') {
+        setTimeout(function () { setOwner('manual', 'user_input'); }, 300);
+        return 'ok';
+      }
+      if (mode === 'fixture-crash') {
+        setTimeout(function () {
+          document.getElementById('error-message').textContent = '게임 모듈이 비정상 종료되었습니다(abort).';
+          setState('error');
+        }, 300);
+        return 'ok';
+      }
+      timer = setInterval(function () {
+        if (mode === 'fixture-hang') return;   // 프레임도 멈춘 채 끝나지 않는다
+        setFrame((st.frame || 0) + 10);
+        if (mode === 'fixture-framecap') return;
+        if (mode === 'fixture-stageend' && st.frame >= maxFrames) {
+          clearInterval(timer);
+          setOwner('ai_suspended', 'stage_end');   // 이벤트 없이 상태만 바뀐다(정수 코드)
+          return;
+        }
+        if (st.frame >= maxFrames) {
+          clearInterval(timer);
+          if (mode === 'fixture-artifact') {
+            emit({ type: 'artifact', name: 'trace.jsonl', encoding: 'base64', data: btoa('{"frame":1}\n') });
+            emit({ type: 'artifact', name: 'trace.jsonl', encoding: 'base64', data: btoa('{"frame":2}\n') });
+          }
+          emit({ type: 'episode_end', status: 'completed', reason: 'frame_limit', frame: st.frame, episode_id: 1 });
+        }
+      }, 5);
+      return 'ok';
+    },
+    suspend: function (reason) { setOwner('ai_suspended', reason); emit({ type: 'transition', mode: 'ai_suspended', reason: reason }); return 'ok'; },
+    resume: function () { setOwner('ai_active', 'none'); emit({ type: 'transition', mode: 'ai_active', reason: 'none' }); return 'ok'; },
+    disable: function (reason) {
+      if (timer) clearInterval(timer);
+      setOwner('manual', 'host_request');
+      if (mode !== 'fixture-leak' && st.input) { st.input.hold = 0; st.input.pending_edges = 0; st.input.queued_actions = 0; }
+      emit({ type: 'transition', mode: 'manual', reason: reason });
+      return 'ok';
+    },
+    state: function () { return JSON.parse(JSON.stringify(st)); },
+    onEvent: function (cb) { listeners.push(cb); }
+  };
+})();
+</script>

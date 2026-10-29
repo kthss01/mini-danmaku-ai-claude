@@ -1,0 +1,33 @@
+{
+  "schema": "taisei-ai-evalset/1",
+  "id": "eval-set-v0",
+  "status": "proposal",
+  "note": "초기 한 패턴용 제안. 스펠 id는 개발자 빌드의 스펠 목록을 확인한 뒤 ai-runner(#20)와 확정한다(null은 미정). 튜닝·학습에는 dev만 쓰고 holdout은 최종 보고에서만 따로 본다.",
+  "dev": {
+    "scenario": {"kind": "spell", "id": null, "difficulty": "Easy", "character": "marisa", "shot": "marisaA"}
+  },
+  "holdout": [
+    {"label": "다른 스펠", "scenario": {"kind": "spell", "id": null, "difficulty": "Easy", "character": "marisa", "shot": "marisaA"}},
+    {"label": "다른 기체", "scenario": {"kind": "spell", "id": null, "difficulty": "Easy", "character": "youmu", "shot": "youmuA"}}
+  ],
+  "policies": ["idle", "simple-move", "avoid-v1"],
+  "limits": {"max_frames": 3600, "wall_timeout_s": 180, "note": "max_frames는 스펠 제한 시간에 맞춘다. wall_timeout_s는 예상 시간 x 2 + 60초"},
+  "pre_hit_window_frames": 120,
+  "modes": {
+    "uncontrolled": {
+      "episodes_per_policy": 30,
+      "class": "exploratory",
+      "note": "시드를 지정하지 않는 탐색 비교. 우열 확정 근거로 쓰지 않는다."
+    },
+    "seeded": {
+      "seed_count": 20,
+      "seed_base": 1592590336,
+      "seed_rule": "seed_i = seed_base + i (i = 0..19), 십진수",
+      "episodes_per_seed": 1,
+      "determinism_probe": {"seed_index": 0, "repeats": 5, "note": "같은 시드 5회. 결과 일치는 관측일 뿐 재현 검증이 아니다."},
+      "class": "controlled"
+    }
+  },
+  "order": "interleaved",
+  "order_note": "정책을 번갈아 돌린다(idle, simple-move, avoid-v1, idle, ...). 실제 순서는 started_at으로 결과에 남는다."
+}
