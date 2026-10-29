@@ -114,8 +114,10 @@
 | `p_continues_used` | i32 | `stats.total.continues_used` |
 | `p_x`, `p_y` | f32 | 위치 (히트박스 중심) |
 | `p_vx`, `p_vy` | f32 | 직전 틱의 이동량(`plr->velocity`) |
-| `p_speed_normal`, `p_speed_focus` | f32 | 현재 캐릭터의 보통/저속 속도(`PLR_PROP_SPEED`). 마리사 봄 중 감속 같은 일시 변화는 반영하지 않는다 |
+| `p_speed_normal`, `p_speed_focus` | f32 | 현재 캐릭터의 보통/저속 속도(`player_property(PLR_PROP_SPEED)`를 포커스 플래그 해제/설정 상태로 각각 읽는다). 마리사 봄 중 감속처럼 캡처 시점의 일시 변화는 그대로 반영된다 |
 | `p_hit_radius` | f32 | 플레이어 판정 반지름. **항상 0** (판정은 점이다) |
+
+**캡처 비용(참고용 추가 필드, 계약 필수 아님):** `cap_ms_last`, `cap_ms_avg`, `cap_ms_max`(f32). `ai_bridge_capture` 안에서 잰 밀리초이며 호스트 콜백 시간은 포함하지 않는다. 에피소드마다 0에서 다시 센다. 브라우저 타이머 해상도(0.1 ms) 아래 값은 0으로 보인다.
 
 **boss**
 
@@ -218,6 +220,8 @@
 | `disable(reason)` | 임의 → `manual` | 대기 중인 액션 슬롯·엣지를 모두 버린다 |
 | (브리지 자동) | `ai_active` → `ai_suspended` | 일시정지 진입(`pause`), 게임오버/컨티뉴 메뉴(`game_over`), 스테이지 종료(`stage_end`), 재시작(`restart`), 새 에피소드 진입 시 아직 `ai_active`이면 `restart` |
 | (브리지 자동) | `ai_active` → `manual` | `ai_active` 중 사용자 게임 키 입력(`user_input`), 브리지 내부 오류(`bridge_error`) |
+
+게임오버(컨티뉴) 메뉴의 "Restart the Game"은 원본이 `stage_finish` 없이 `GAMEOVER_RESTART`를 직접 설정하므로 사유가 `game_over`로 남는다(새 에피소드는 `ai_suspended` 그대로 시작). `request_restart()`와 일시정지 메뉴의 재시작·F2는 `stage_finish`를 거쳐 `restart`가 된다.
 
 `manual`에서는 `suspend`가 무시된다. 전환마다 `owner_events`가 오르고 `owner_reason`이 갱신되며, 호스트가 `Module.taiseiAIOnEvent(kind, state, reason)`을 정의했으면 같은 순간에 호출한다(`kind`: 0=전환).
 
