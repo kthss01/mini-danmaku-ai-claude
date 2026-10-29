@@ -165,6 +165,58 @@ export function ellipses(seed = 6) {
 	};
 }
 
+// 관측에서 알 수 없는 방향 전환: 탄이 날아오다 task가 속도를 직접 바꿔 플레이어 쪽으로 꺾는다.
+// MoveParams 전개는 변경 시점 이후 틀리므로 정책은 예측 실패를 겪는다(실패 사례를 따로 센다).
+export function turning(seed = 9, { turnAfter = 28 } = {}) {
+	const rnd = mulberry32(seed);
+	return {
+		name: 'turning',
+		player: { x: 240, y: 490 },
+		spawn(sim, frame) {
+			if (frame % 8 === 0) {
+				const x = 40 + rnd() * 400;
+				sim.addBullet({
+					x, y: -8, v: [0, 3.2], size: [10, 10],
+					task(b, f, s) {
+						if (b.age === turnAfter) {
+							const dx = s.player.x - b.s.x;
+							const dy = s.player.y - b.s.y;
+							const d = Math.hypot(dx, dy) || 1;
+							b.s.v = { x: (dx / d) * 3.6, y: (dy / d) * 3.6 }; // 규칙 밖의 순간적인 속도 변경
+						}
+					},
+				});
+			}
+		},
+	};
+}
+
+// 위에서 내려오는 가로 탄 벽에 빈 칸(틈)이 하나 있다. 틈은 직전 틈에서 gapShift 안쪽에 열려 도달 가능하다.
+// 틈이 좁을수록 저속 이동이나 정지가 필요하다.
+export function gapWall(seed = 7, { spacing = 24, size = 12, speed = 3, period = 48, gapShift = 110 } = {}) {
+	const rnd = mulberry32(seed);
+	let gapX = 380;
+	return {
+		name: 'gap-wall',
+		player: { x: 240, y: 500 },
+		spawn(sim, frame) {
+			if (frame % period === 1) {
+				gapX = Math.min(440, Math.max(40, gapX + (rnd() - 0.5) * 2 * gapShift));
+				// 틈 = gapX에 가장 가까운 격자 칸 하나를 비운다
+				const n = Math.floor(480 / spacing);
+				const gapIdx = Math.round(gapX / spacing);
+
+				for (let k = 1; k < n; k++) {
+					if (k === gapIdx) {
+						continue;
+					}
+					sim.addBullet({ x: k * spacing, y: -10, v: [0, speed], size: [size, size] });
+				}
+			}
+		},
+	};
+}
+
 export const ALL = {
 	rain: () => rain(),
 	crossing: () => crossing(),
@@ -175,4 +227,7 @@ export const ALL = {
 	accelerating: () => accelerating(),
 	ellipses: () => ellipses(),
 	'sweeping-laser': () => sweepingLaser(),
+	'gap-wall': () => gapWall(),
+	turning: () => turning(),
+	'gap-wall-tight': () => gapWall(8, { spacing: 16, size: 12 }),
 };

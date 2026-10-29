@@ -401,6 +401,11 @@ export class Planner {
 			pick = pool.includes(this.prev) ? this.prev : pool.includes(0) ? 0 : pool[0];
 		}
 
+		// 시간이 모자라 이전 계획의 다음 단계만 확인하고 이어간 경우
+		if (mode === 'normal' && !finished && pick === this.prev && this.planValid && this.bestK[pick] === this.prevK) {
+			mode = 'reuse';
+		}
+
 		// 봄 판단(기본 꺼짐): 확정 피격을 피할 후보가 없고 곧 맞을 때
 		let bomb = false;
 		const bc = this.cfg.bomb;

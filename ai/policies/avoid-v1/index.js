@@ -87,7 +87,7 @@ export function init(config, host) {
 		}
 	}
 
-	function makeHalt(frame, reason, ms) {
+	function makeHalt(frame, reason, ms, detail) {
 		stats.halts.total++;
 		stats.halts.by_reason[reason] = (stats.halts.by_reason[reason] || 0) + 1;
 		consecutiveHalts++;
@@ -105,7 +105,7 @@ export function init(config, host) {
 			bomb: 0,
 			special: 0,
 			request,
-			meta: { mode: 'halt', frame, reason, safe_verified: false, decision_ms: ms, over_budget: ms > cfg.budget_ms },
+			meta: { mode: 'halt', frame, reason, detail, safe_verified: false, decision_ms: ms, over_budget: ms > cfg.budget_ms },
 		};
 	}
 
@@ -133,7 +133,7 @@ export function init(config, host) {
 			if (!v.ok) {
 				resetState();
 				lastFrame = -1;
-				return makeHalt(obs && Number.isInteger(obs.frame) ? obs.frame : -1, 'observation_invalid', now() - t0);
+				return makeHalt(obs && Number.isInteger(obs.frame) ? obs.frame : -1, 'observation_invalid', now() - t0, v.detail ? `${v.reason}: ${v.detail}` : v.reason);
 			}
 
 			const frame = v.frame;

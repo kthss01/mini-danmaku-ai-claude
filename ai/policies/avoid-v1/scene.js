@@ -270,12 +270,13 @@ export class Scene {
 				const m = (this.bM0[j] + this.bK[j] * t) * rr;
 				const lim = vmax * t + rmax + m + 1;
 				const lim2 = lim * lim;
+				// 프레임 사이를 지나가는 빠른 탄을 놓치지 않도록 끝점이 아니라 이동 선분과의 거리를 쓴다
 				const ax = this.trajX[base + t - 1] - px0;
 				const ay = this.trajY[base + t - 1] - py0;
 				const bx = this.trajX[base + t] - px0;
 				const by = this.trajY[base + t] - py0;
 
-				if (ax * ax + ay * ay <= lim2 || bx * bx + by * by <= lim2) {
+				if (segOriginDist2(ax, ay, bx, by) <= lim2) {
 					if (lo === 0) {
 						lo = t;
 					}
