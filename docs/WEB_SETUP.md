@@ -98,15 +98,27 @@ http://127.0.0.1:8080/
 | 동작 | 기본 키 |
 | --- | --- |
 | 이동 | 방향키 |
-| 공격 · 메뉴 선택 | `Z` |
+| 공격 | 자동 발사(`Z`를 누르는 동안 멈춤) |
+| 메뉴 선택 | `Z` |
 | 봄 · 메뉴 취소 | `X` |
 | 파워 서지 | `C` |
 | 저속 이동(피격 판정 표시) | `Shift`(왼쪽) |
 | 대화 건너뛰기 | `Ctrl`(왼쪽) |
 | 일시정지 · 메뉴 뒤로 | `Esc` |
+| 첫 실행 프롤로그 건너뛰기 | `Esc` 또는 `X` |
 | 소리 켜기/끄기 | `M` |
 
+웹 빌드는 자동 발사가 기본이다(fork PR kthss01/taisei#3, `CONFIG_SHOT_INVERTED` 기본값 1).
+- 게임 옵션의 "기본 공격 상태"(영어 화면: Options → Shoot by default)에서 끌 수 있다. 끄면 `Z`를 누르는 동안 발사한다.
+- Taisei는 설정을 저장할 때 모든 항목을 함께 저장한다. 그래서 이 변경 전에 설정을 저장한 브라우저에서는 꺼진 상태가 남을 수 있다.
+
 키는 게임 메뉴 Options → Customize controls에서 바꿀 수 있다. `F11`(전체 화면)과 `F12`(개발자 도구)는 브라우저가 처리한다.
+
+### 언어
+
+- 게임 옵션의 **Language**(한국어 UI에서는 "언어 (Language)") 항목에서 `System` / `English` / `한국어` / `Deutsch` / `Français` / `简体中文` 중 고른다. 한국어 번역 범위와 용어는 [docs/web/L10N.md](web/L10N.md)에 있다.
+- 기본값 `System`은 브라우저 언어를 따른다. **한국어 브라우저(`ko`, `ko-KR`)는 처음부터 한국어로 시작한다.** 그 밖의 언어는 영어로 시작한다(번역이 있는 독일어·프랑스어(캐나다)·중국어(간체) 브라우저는 해당 언어).
+- 선택은 즉시 적용되고, 다른 설정처럼 옵션 메뉴를 나갈 때 IndexedDB에 저장된다.
 
 ## 5. 저장
 
@@ -167,5 +179,6 @@ Taisei 코드는 `COPYING.txt`의 허용적 라이선스(MIT 형식)를 따른�
 | [docs/web/SHELL.md](web/SHELL.md) | 웹 셸 상태 흐름, 입력·포커스 정책 |
 | [docs/web/SERVING.md](web/SERVING.md) | 서버 옵션, 자산 검사, 공개 배포 조건 |
 | [docs/web/PAGES.md](web/PAGES.md) | GitHub Pages 자동 빌드·배포 |
+| [docs/web/L10N.md](web/L10N.md) | 한국어 번역 범위·용어표·말투 |
 | [docs/web/QA.md](web/QA.md) | QA 항목과 판정 |
 | [docs/SETUP.md](SETUP.md) | Windows 데스크톱 빌드 |
