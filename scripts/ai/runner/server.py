@@ -84,7 +84,8 @@ class SiteServer:
             except OSError:
                 pass
         if self.process is not None:
-            info["process_gone"] = not procs.pid_alive(self.process.pid)
+            # 자기가 띄운 프로세스는 tasklist 같은 외부 명령 없이 Popen.poll()로 독립 확인한다.
+            info["process_gone"] = self.process.poll() is not None
         if self.port is not None:
             info["port_closed"] = procs.wait_port_closed(self.port)
         return info

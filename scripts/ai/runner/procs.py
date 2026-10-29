@@ -15,6 +15,10 @@ import time
 IS_WINDOWS = os.name == "nt"
 
 
+class ProcessLookupFailed(RuntimeError):
+    """프로세스 목록을 읽지 못함. 빈 결과(없음)와 구분해야 한다."""
+
+
 def popen_flags() -> dict:
     """자식을 새 프로세스 그룹/세션으로 띄워 Ctrl+C가 실행기와 함께 자식에게 퍼지지 않게 한다."""
     if IS_WINDOWS:
@@ -24,11 +28,13 @@ def popen_flags() -> dict:
 
 def pid_alive(pid: int) -> bool:
     if IS_WINDOWS:
-        out = subprocess.run(
+        done = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, errors="replace",
-        ).stdout
-        return f'"{pid}"' in out
+            capture_output=True, text=True, errors="replace", timeout=60,
+        )
+        if done.returncode != 0:
+            raise ProcessLookupFailed(f"tasklist 종료 코드 {done.returncode}: {done.stderr.strip()[:200]}")
+        return f'"{pid}"' in done.stdout
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -62,16 +68,24 @@ def find_pids_by_cmdline(marker: str) -> list[int]:
             "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
             "$_.CommandLine.Contains($env:TAISEI_AI_MARKER) } | ForEach-Object { $_.ProcessId }"
         )
-        out = subprocess.run(
+        done = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, errors="replace", timeout=60,
             env={**os.environ, "TAISEI_AI_MARKER": marker},
-        ).stdout
+        )
+        # 명령 실패를 '일치하는 프로세스 없음'으로 오인하지 않는다. 호출자가 확인 불가(unknown)로 처리한다.
+        if done.returncode != 0:
+            raise ProcessLookupFailed(f"powershell 종료 코드 {done.returncode}: {done.stderr.strip()[:200]}")
+        out = done.stdout
         for token in out.split():
             if token.isdigit():
                 pids.append(int(token))
     else:
-        out = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, errors="replace").stdout
+        done = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, errors="replace",
+                              timeout=60)
+        if done.returncode != 0:
+            raise ProcessLookupFailed(f"ps 종료 코드 {done.returncode}: {done.stderr.strip()[:200]}")
+        out = done.stdout
         for line in out.splitlines():
             head, _, rest = line.strip().partition(" ")
             if head.isdigit() and marker in rest:

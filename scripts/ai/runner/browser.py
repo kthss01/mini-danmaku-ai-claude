@@ -179,6 +179,13 @@ class Browser:
         # 조회 실패 때는 시작 프로세스 자체라도 강제 종료를 시도한다.
         if remaining is None and self.process is not None and self.process.poll() is None:
             procs.kill_tree(self.process.pid)
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        # 프로필 경로 조회와 독립으로, 직접 띄운 프로세스가 아직 살아 있으면 누수로 센다.
+        if self.process is not None and self.process.poll() is None:
+            remaining = sorted(set(remaining or []) | {self.process.pid})
         self.leaked_pids = forced
         # 프로세스가 완전히 사라진 뒤에야 프로필이 지워진다(Windows는 열린 파일 삭제가 실패한다).
         for _ in range(10):

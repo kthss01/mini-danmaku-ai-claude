@@ -135,7 +135,8 @@ def _frame_progress(cfg: RunConfig, result: EpisodeResult) -> dict:
     if result.reason == "frame_limit":
         detected = "runner" if "runner_detected" in result.detail else "host"
     return {"max_frames": cfg.max_frames, "pre_enable_frame": result.pre_enable_frame,
-            "first_sample_frame": result.enable_frame, "end_frame": result.end_frame, "elapsed_frames": elapsed,
+            "first_sample_frame": result.enable_frame, "end_frame": result.end_frame,
+            "cleanup_frame": result.cleanup_frame, "elapsed_frames": elapsed,
             "exceeded_by": None if elapsed is None else max(0, elapsed - cfg.max_frames),
             "limit_detected_by": detected}
 
@@ -246,7 +247,10 @@ def run(argv: list[str]) -> int:
                 break
     finally:
         if driver is not None:
-            driver.close()
+            try:
+                driver.close()
+            except Exception as exc:  # noqa: BLE001 - 로그 파일 닫기 실패가 서버 종료를 건너뛰게 하지 않는다
+                logger.log(f"드라이버 종료 중 예외(서버 종료는 계속): {exc!r}", "ERROR")
         try:
             server_info = server.stop()
         except Exception as exc:  # noqa: BLE001 - 서버 종료 실패도 기록하고 요약·종료 코드는 끝까지 만든다
@@ -267,10 +271,22 @@ def run(argv: list[str]) -> int:
             exit_code = cfgmod.EXIT_CLEANUP_FAILED
         if results:
             manifest["browser"]["version"] = results[0].browser_version or None
-        _write_summary(run_dir, cfg, run_id, results, exit_code, manifest["cleanup"]["ok"], code)
+        # 최종 기록도 단계마다 격리한다. 한 파일을 쓰지 못해도 나머지 기록·종료 코드 계산은 계속한다.
+        record_failed = False
+        try:
+            _write_summary(run_dir, cfg, run_id, results, exit_code, manifest["cleanup"]["ok"], code)
+        except OSError as exc:
+            record_failed = True
+            logger.log(f"summary.json 기록 실패: {exc!r}", "ERROR")
         manifest.update({"finished": True, "ended_at": utc_now(), "exit_code": exit_code,
                          "interrupted": interrupted})
-        write_json(run_dir.path / "run.json", manifest)
+        try:
+            write_json(run_dir.path / "run.json", manifest)
+        except OSError as exc:
+            record_failed = True
+            logger.log(f"run.json 기록 실패: {exc!r}", "ERROR")
+        if record_failed and exit_code == cfgmod.EXIT_OK:
+            exit_code = cfgmod.EXIT_RUNNER_ERROR  # 결과 기록이 불완전하므로 정상 종료로 보고하지 않는다
         logger.log(f"run {run_id} 종료: exit_code={exit_code} cleanup={manifest['cleanup']['status']}")
         logger.close()
     print(json.dumps({"run_id": run_id, "run_dir": str(run_dir.path), "exit_code": exit_code,

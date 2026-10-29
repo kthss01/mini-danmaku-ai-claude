@@ -165,7 +165,9 @@ class EpisodeResult:
     browser_version: str = ""
     enable_frame: int | None = None          # enable 직후 첫 샘플의 프레임
     pre_enable_frame: int | None = None      # enable 직전 마지막 샘플의 프레임(한도 기준)
-    end_frame: int | None = None             # 마지막으로 본 프레임
+    end_frame: int | None = None             # 관측 구간(감시 루프)에서 마지막으로 본 프레임
+    cleanup_frame: int | None = None         # 정리(disable 이후)에 본 프레임. 한도 판단과 구분한다
+    frame_locked: bool = False               # True가 되면 더 이상 end_frame을 갱신하지 않는다
     evidence_errors: list = field(default_factory=list)   # 증거 수집·저장 중 실패(정리 판정과 별개로 보존)
     cleanup_errors: list = field(default_factory=list)    # 정리 단계 예외(입력 해제 확인·브라우저 종료)
     t_enable: float | None = None
@@ -184,8 +186,15 @@ class EpisodeDriver:
         self._game_file = open(run_dir.logs / "game.log", "a", encoding="utf-8")
 
     def close(self) -> None:
-        self._console_file.close()
-        self._game_file.close()
+        # 한쪽 파일 닫기가 실패해도 다른 쪽은 닫는다.
+        errors = []
+        for handle in (self._console_file, self._game_file):
+            try:
+                handle.close()
+            except OSError as exc:
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     # ---- 페이지 설정 ----
     def _run_settings(self, index: int) -> dict:
@@ -249,7 +258,10 @@ class EpisodeDriver:
             result.last_state = data["ai"]
             frame_now = state_frame(data["ai"])
             if frame_now is not None:
-                result.end_frame = frame_now
+                if result.frame_locked:
+                    result.cleanup_frame = frame_now
+                else:
+                    result.end_frame = frame_now
             if result.first_state is None:
                 result.first_state = data["ai"]
         result.dropped_events = max(result.dropped_events, data.get("dropped", 0))
@@ -442,8 +454,12 @@ class EpisodeDriver:
                 result.status, result.reason = "error", "policy_error"
                 result.detail = f"정책 {cfg.policy!r}을(를) 불러오지 못했습니다: {exc}"
                 return
-        # 프레임 한도의 기준은 enable 직전 샘플이다. enable 직후 첫 샘플을 기준으로 하면 그 사이에 진행한 프레임이 빠진다.
-        result.pre_enable_frame = state_frame(result.last_state)
+        # 프레임 한도의 기준은 enable 직전 샘플이다. 정책 불러오기 등으로 오래 걸렸을 수 있어 직전에 새로 읽는다.
+        # 읽지 못하면(None) 직후 첫 샘플을 기준으로 하되 그 사이 프레임이 빠진다는 점을 frame_progress에 남긴다.
+        try:
+            result.pre_enable_frame = state_frame(self._poll(conn, index, result).get("ai"))
+        except CdpError:
+            result.pre_enable_frame = None
         # 호스트 API의 enable()은 반환 코드('ok'·'not_playing'·'no_policy' 등)를 준다. 옵션은 무시될 수 있다.
         code = conn.evaluate(f"window.taiseiAI.enable({json.dumps(options)})", await_promise=True, timeout=30)
         result.started_at = utc_now()
@@ -482,6 +498,7 @@ class EpisodeDriver:
                 result.detail = f"벽시계 한도 {cfg.wall_timeout_s}초 초과"
                 break
             time.sleep(self._poll_delay(data.get("ai"), result))
+        result.frame_locked = True
         result.running_s = round(time.monotonic() - t1, 3)
 
     def _derive_end(self, state: dict | None, result: EpisodeResult):
@@ -527,6 +544,7 @@ class EpisodeDriver:
     # ---- 정리 ----
     def _finish(self, conn: CdpConnection | None, browser: Browser, index: int, result: EpisodeResult) -> None:
         """입력 해제 확인 → 증거 수집 → 페이지·브라우저 종료. 예외가 나도 끝까지 진행한다."""
+        result.frame_locked = True  # 정리 중 폴링이 한도 판단 프레임(end_frame)을 덮어쓰지 않게 한다
         try:
             if conn is not None and not conn.closed.is_set():
                 self._guard("입력 해제 확인", index, result, lambda: self._release_inputs(conn, index, result))

@@ -39,19 +39,30 @@ class RunLogger:
     def __init__(self, path: Path, echo: bool = True):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(path, "a", encoding="utf-8")
+        self.write_failures = 0
         self._echo = echo
         self._lock = threading.Lock()
 
     def log(self, message: str, level: str = "INFO") -> None:
+        """로그 기록 실패(디스크 오류 등)가 실행·정리 흐름을 멈추지 않게 한다. 실패하면 표준 오류에만 남긴다."""
         line = f"{utc_now()} {level} {message}"
         with self._lock:
-            self._file.write(line + "\n")
-            self._file.flush()
-            if self._echo:
-                print(line, file=sys.stderr, flush=True)
+            try:
+                self._file.write(line + "\n")
+                self._file.flush()
+            except (OSError, ValueError):
+                self.write_failures += 1
+            try:
+                if self._echo or self.write_failures:
+                    print(line, file=sys.stderr, flush=True)
+            except (OSError, ValueError):
+                pass
 
     def close(self) -> None:
-        self._file.close()
+        try:
+            self._file.close()
+        except (OSError, ValueError):
+            pass
 
 
 class RunDir:

@@ -115,7 +115,7 @@ python -m unittest discover -s tests/ai-runner -v
      | `manual` / `bridge_error` | `error` / `runner_error` |
 
      `pause`·`focus_lost` 등 그 밖의 정지는 끝으로 보지 않고 이벤트·`owner_transitions`로만 남긴다(계획 외 정지 판정은 평가).
-   - 논리 프레임 한도: `state()`의 프레임(`frame`·`last_frame`·`lastFrame`)이 `enable` 시점 프레임보다 `max_frames` 이상 늘면 `completed / frame_limit`. 현재 호스트 API(PR #42)에는 한도 옵션이 없어 **실행기가 폴링으로 감지**한다(한도 120프레임 전부터 0.04초 간격으로 좁혀 폴링하지만 몇 프레임 넘길 수 있고, 그때 `run.detail`에 `runner_detected`를 적는다). 호스트가 한도를 정확히 집행하게 되면(`enable` 옵션으로 `limits.max_frames`를 이미 넘기고 있다) 그 값을 따른다. 스펠·스테이지 종료로 끝나는 실험에서는 프레임 한도가 안전장치일 뿐이다. 한도의 기준 프레임은 `enable` **직전** 샘플이며(직후 첫 샘플을 기준으로 하면 그 사이 프레임이 빠진다), `runner.frame_progress`에 `pre_enable_frame`·`first_sample_frame`·`end_frame`·`elapsed_frames`·`exceeded_by`·`limit_detected_by`(`runner`|`host`)를 남긴다. 폴링으로 감지한 한도는 정확 N프레임 비교에 쓰지 않는다.
+   - 논리 프레임 한도: `state()`의 프레임(`frame`·`last_frame`·`lastFrame`)이 `enable` 시점 프레임보다 `max_frames` 이상 늘면 `completed / frame_limit`. 현재 호스트 API(PR #42)에는 한도 옵션이 없어 **실행기가 폴링으로 감지**한다(한도 120프레임 전부터 0.04초 간격으로 좁혀 폴링하지만 몇 프레임 넘길 수 있고, 그때 `run.detail`에 `runner_detected`를 적는다). 호스트가 한도를 정확히 집행하게 되면(`enable` 옵션으로 `limits.max_frames`를 이미 넘기고 있다) 그 값을 따른다. 스펠·스테이지 종료로 끝나는 실험에서는 프레임 한도가 안전장치일 뿐이다. 한도의 기준 프레임은 `enable` **직전** 샘플이며(직후 첫 샘플을 기준으로 하면 그 사이 프레임이 빠진다), `runner.frame_progress`에 `pre_enable_frame`(enable 직전에 새로 읽은 샘플)·`first_sample_frame`·`end_frame`(감시 구간에서 마지막으로 본 프레임)·`cleanup_frame`(정리 단계에서 본 프레임, 한도 판단과 구분)·`elapsed_frames`·`exceeded_by`·`limit_detected_by`(`runner`|`host`)를 남긴다. 폴링으로 감지한 한도는 정확 N프레임 비교에 쓰지 않는다.
    - 벽시계 한도 → `timeout / wall_timeout`
    - 셸이 `error`·`exited`·`unsupported`가 되거나 브라우저 연결이 끊김 → `error / runner_error`
 6. **정지 신호**: `await taiseiAI.disable('host_request')`. 직후 `state()`로 입력 해제를 확인한다(6.2).
@@ -200,6 +200,8 @@ artifacts/runs/<run_id>/            # run_id = YYYYMMDDTHHMMSSZ-<6hex>, artifact
 - 에피소드마다 새 브라우저·새 임시 프로필을 쓴다. IndexedDB 상태(설정·진행·리소스 캐시)가 에피소드 사이에 섞이지 않는다. 대가로 에피소드마다 게임 로드 시간이 든다.
 - 종료 순서: 입력 해제 요청과 확인 → 증거 수집 → 페이지 종료 → 브라우저 종료(`Browser.close`, 안 되면 프로필 경로로 찾은 프로세스만 강제 종료) → 서버 종료 → 포트가 닫혔는지 확인. 예외·Ctrl+C에도 같은 순서를 `finally`에서 실행한다.
 - 정리 단계(입력 해제 확인 → 증거 수집 → 브라우저 종료 → 서버 종료)는 **각각 예외를 격리**한다. 앞 단계가 예외·중단으로 끝나도 브라우저와 서버 종료는 실행되고, 실패는 `runner.cleanup_errors`(정리 단계)·`runner.evidence_errors`(증거 수집·저장)에 남는다. artifact 저장 실패가 실행을 멈추게 하지 않는다.
+- 외부 명령으로 프로세스를 조회하다 **실패(비정상 종료 코드·시간 초과)하면 "일치하는 프로세스 없음"으로 보지 않고** `remaining: null`(확인 불가, `unknown`)로 남긴다. 직접 띄운 브라우저·서버 프로세스의 생존은 조회 결과와 무관하게 `Popen.poll()`로 독립 확인해, 살아 있으면 `leak`이다.
+- 로그 기록(`runner.log`)과 최종 기록 파일(`summary.json`·`run.json`) 쓰기 실패는 정리 흐름을 멈추지 않는다(로그는 best effort, 드라이버·서버 종료·최종 기록을 각각 격리). 최종 기록을 쓰지 못한 실행은 정상(0)으로 보고하지 않고 종료 코드 5다.
 - 정리 판정은 에피소드마다 `runner.cleanup_status`(`clean`·`unknown`·`leak`), 실행 전체는 `run.json`의 `cleanup.status`다. `unknown`(프로세스 목록을 못 읽음, 브리지가 있었는데 입력 해제를 확인하지 못함, 정리 단계 예외)은 누수 확정이 아니지만 정리 검증 성공도 아니므로 `cleanup.ok`가 거짓이고 종료 코드 6이다. 브리지가 없는 smoke(`no_bridge`)는 해제할 입력이 없어 `clean`이다.
 
 ## 9. 브라우저 제어 방식을 CDP 직접 연결로 정한 이유
