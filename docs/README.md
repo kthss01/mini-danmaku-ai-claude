@@ -7,7 +7,7 @@
 - `WEB_SETUP.md`: 웹 버전 빌드·로컬 실행 절차, 검증 범위, 제약
 - `WEB_PORT_PLAN.md`: 웹 전환 계획, 세션 분할, 체크리스트와 완료 조건
 - `CLAUDE_CODEX_WORKFLOW.md`: Claude 구현·Codex 검토 진행 방식
-- `web/`: 세션별 상세 문서 — `BUILD.md`(빌드·패키징), `RUNTIME.md`(런타임·저장), `SHELL.md`(웹 셸), `SERVING.md`(서버·자산 검사), `QA.md`(통합 QA 항목·판정)
+- `web/`: 세션별 상세 문서 — `BUILD.md`(빌드·패키징), `RUNTIME.md`(런타임·저장), `SHELL.md`(웹 셸), `SERVING.md`(서버·자산 검사), `PAGES.md`(GitHub Pages 배포), `QA.md`(통합 QA 항목·판정)
 - `ARCHITECTURE.md`: 게임 상태, 입력 지점 및 프로세스 간 연동 설계(소스 분석 후 추가)
 - `EXPERIMENTS.md`: 실행 조건, 지표, 결과 및 실패 원인(첫 실험부터 추가)
 - `VISUALS.md`: 시각 표현 프리셋과 성능 비교(자동 플레이 기준선 이후 추가)
