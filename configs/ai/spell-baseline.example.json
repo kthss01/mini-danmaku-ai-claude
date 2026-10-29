@@ -1,0 +1,13 @@
+{
+  "experiment_id": "spell-s1-easy-baseline",
+  "mode": "bridge",
+  "build_flavor": "developer",
+  "spell": "REPLACE_WITH_SPELL_ID",
+  "difficulty": "Easy",
+  "shotmode": "youmuA",
+  "policy": "idle",
+  "episodes": 3,
+  "max_frames": 3600,
+  "wall_timeout_s": 180,
+  "headless": true
+}

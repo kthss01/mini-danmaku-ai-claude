@@ -97,14 +97,16 @@ Windows 초기 실행은 완료되었지만 전체 수동 플레이는 미검증
 
 ```text
 .
-├── agent/       # 관측 모델, 위험 예측, 입력 정책
+├── ai/          # AI 단계 코드: bridge/(관측·입력 어댑터), policies/(회피 정책)
 ├── artifacts/   # 작은 결과 요약과 외부 산출물 안내
-├── bridge/      # 게임과 에이전트 사이의 연동
-├── configs/     # 실험 설정과 시각 표현 프리셋
-├── docs/        # 환경 구축, 구조 분석, 실험 결과, 시각 표현 안내
-├── scripts/     # 설치, 빌드, 실행, 평가 자동화
+├── configs/     # 실험 설정과 시각 표현 프리셋 (AI 실행 설정은 configs/ai/)
+├── docs/        # 환경 구축, 구조 분석, 실험 결과, 시각 표현 안내 (AI 문서는 docs/ai/)
+├── evaluation/  # 평가 스키마·검증기·요약기
+├── scripts/     # 설치, 빌드, 실행, 평가 자동화 (AI 실행기는 scripts/ai/)
 └── tests/       # 충돌 예측과 연동 등 핵심 동작 검증
 ```
+
+초기 구조의 `agent/`·`bridge/` 자리 폴더는 AI 단계 착수 때 [#19 결정](https://github.com/kthss01/mini-danmaku-ai-claude/issues/19#issuecomment-6495280156)에 따라 `ai/`·`evaluation/`으로 대체했다. 관측·액션 계약은 [AI 브리지 계약](ai/CONTRACT.md), 구현은 [AI 브리지 구현](ai/BRIDGE.md)에 있다.
 
 초기에는 각 경로의 책임만 정의하고, 구현 언어와 연동 방식이 확정된 후 패키지 구조를 구체화한다. Taisei 원본 도입은 버전 고정과 수정 관리가 쉬운 방식을 선택하며, 서브모듈 또는 별도 포크 중 실제 빌드·배포 요구에 맞춰 확정한다. 대용량 영상, 빌드 산출물, 모델 파일은 일반 Git 커밋에서 제외한다.
 
