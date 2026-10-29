@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "taisei-ai-evaluation/1",
+  "title": "평가 결과 (<run>/evaluation/evaluation.json)",
+  "description": "평가 도구가 원시 기록에서 판정해 쓴다. 실행기의 episodes/*.json과 summary.json은 고치지 않는다. 어떤 에피소드도 지우지 않으며 누락·읽기 실패도 status=missing으로 남는다.",
+  "type": "object",
+  "required": ["schema", "tool", "source", "support", "episodes", "groups", "failures"],
+  "properties": {
+    "schema": {"const": "taisei-ai-evaluation/1"},
+    "generated_at": {"type": "string"},
+    "tool": {"type": "object", "required": ["name", "version"], "properties": {"name": {"type": "string"}, "version": {"type": "string"}}},
+    "source": {
+      "type": "object",
+      "required": ["run_dir", "requested_episodes", "found_episodes"],
+      "properties": {
+        "run_dir": {"type": "string"},
+        "run_id": {"type": ["string", "null"]},
+        "experiment_id": {"type": ["string", "null"]},
+        "runner_exit_code": {"type": ["integer", "null"]},
+        "requested_episodes": {"type": ["integer", "null"], "description": "run.json 값. 없으면 null이고 누락을 알 수 없다"},
+        "found_episodes": {"type": "integer", "minimum": 0},
+        "requested_known": {"type": "boolean"}
+      }
+    },
+    "support": {
+      "type": "object",
+      "description": "이 평가가 지원하지 않거나 검증하지 못한 항목. 값은 supported|unsupported|not_verified|not_measured",
+      "additionalProperties": {"enum": ["supported", "unsupported", "not_verified", "not_measured"]}
+    },
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "episodes": {"type": "array", "items": {"$ref": "#/$defs/episode_evaluation"}},
+    "groups": {"type": "array", "items": {"$ref": "#/$defs/group"}},
+    "failures": {"type": "array", "items": {"$ref": "#/$defs/failure"}}
+  },
+  "$defs": {
+    "status": {"enum": ["completed", "timeout", "aborted", "error", "unsupported", "invalid", "missing"]},
+    "reason": {
+      "enum": [
+        "frame_limit", "spell_end", "stage_end", "game_over",
+        "wall_timeout", "user_abort", "runner_error", "policy_error",
+        "observation_invalid", "rule_violation", "unexpected_pause", "seed_unsupported",
+        "episode_file_missing", "episode_file_unreadable", "unknown"
+      ]
+    },
+    "stats": {
+      "type": ["object", "null"],
+      "properties": {
+        "n": {"type": "integer", "minimum": 0},
+        "mean": {"type": ["number", "null"]},
+        "p50": {"type": ["number", "null"]},
+        "min": {"type": ["number", "null"]},
+        "max": {"type": ["number", "null"]}
+      }
+    },
+    "latency": {
+      "type": ["object", "null"],
+      "properties": {
+        "n": {"type": "integer", "minimum": 0},
+        "p50": {"type": ["number", "null"]},
+        "p95": {"type": ["number", "null"]},
+        "max": {"type": ["number", "null"]},
+        "over_policy_budget": {"type": "integer", "minimum": 0},
+        "over_frame_budget": {"type": "integer", "minimum": 0}
+      }
+    },
+    "rate": {
+      "type": "object",
+      "required": ["k", "n", "rate", "wilson95"],
+      "properties": {
+        "k": {"type": "integer", "minimum": 0},
+        "n": {"type": "integer", "minimum": 0},
+        "rate": {"type": ["number", "null"]},
+        "wilson95": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+      }
+    },
+    "episode_evaluation": {
+      "type": "object",
+      "required": ["ref", "experiment_id", "policy", "scenario", "seed", "build_flavor", "run", "result", "events", "metrics", "quality", "evidence"],
+      "properties": {
+        "ref": {
+          "type": "object",
+          "required": ["run_id", "episode_index"],
+          "properties": {"run_id": {"type": ["string", "null"]}, "episode_index": {"type": "integer"}, "file": {"type": ["string", "null"]}}
+        },
+        "experiment_id": {"type": ["string", "null"]},
+        "policy": {"type": "object"},
+        "scenario": {"type": "object"},
+        "seed": {"type": "object"},
+        "build_flavor": {"type": ["string", "null"]},
+        "rules_preserved": {"type": ["string", "null"]},
+        "shot_inverted": {"enum": [0, 1, null]},
+        "limits": {"type": ["object", "null"]},
+        "started_at": {"type": ["string", "null"]},
+        "run": {
+          "type": "object",
+          "required": ["status", "reason", "evaluable", "status_by_runner"],
+          "properties": {
+            "status": {"$ref": "#/$defs/status"},
+            "reason": {"$ref": "#/$defs/reason"},
+            "reason_code": {"type": ["string", "null"], "description": "브리지 owner_reason 문자열 원본"},
+            "evaluable": {"type": "boolean", "description": "status==completed일 때만 true"},
+            "status_by_runner": {
+              "type": "object",
+              "required": ["status", "reason", "overridden"],
+              "properties": {"status": {"type": ["string", "null"]}, "reason": {"type": ["string", "null"]}, "overridden": {"type": "boolean"}}
+            },
+            "notes": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "result": {
+          "type": ["object", "null"],
+          "required": ["survived", "first_death_frame", "pattern_captured", "stage_cleared", "gameover_type"],
+          "properties": {
+            "survived": {"type": "boolean"},
+            "first_death_frame": {"type": ["integer", "null"]},
+            "pattern_captured": {"type": ["boolean", "null"]},
+            "stage_cleared": {"type": ["boolean", "null"]},
+            "gameover_type": {"type": ["string", "null"]}
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "frame": {"type": ["integer", "null"]},
+              "type": {"enum": ["hit", "death", "deathbomb", "bomb", "suspend", "resume"]},
+              "source": {"type": "string"},
+              "counted": {"type": "boolean"},
+              "inferred": {"type": "boolean"},
+              "reason": {"type": "string"}
+            }
+          }
+        },
+        "metrics": {
+          "type": ["object", "null"],
+          "properties": {
+            "frames_survived": {"type": ["integer", "null"]},
+            "seconds_survived": {"type": ["number", "null"]},
+            "frames_total": {"type": ["integer", "null"]},
+            "hits": {"type": "integer"},
+            "deaths": {"type": "integer"},
+            "deathbombs": {"type": "integer"},
+            "uncounted_deaths": {"type": "integer"},
+            "bombs_policy": {"type": "integer"},
+            "bombs_deathbomb": {"type": "integer"},
+            "continues": {"type": "integer"},
+            "shot_hold_ratio": {"type": ["number", "null"]},
+            "decision_ms": {"$ref": "#/$defs/latency"},
+            "input_lag_frames": {"type": ["object", "null"]},
+            "sim_fps": {"type": ["object", "null"]},
+            "unavailable": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "quality": {
+          "type": "object",
+          "required": ["overflow_frames", "overflow_kinds", "observation_complete", "action_sync"],
+          "properties": {
+            "overflow_frames": {"type": "integer", "minimum": 0},
+            "overflow_kinds": {"type": "array", "items": {"enum": ["bullets", "lasers", "laser_segs", "enemies"]}},
+            "observation_complete": {"type": "boolean"},
+            "frame_gaps": {"type": "integer", "minimum": 0},
+            "conservative_frames": {"type": "integer", "minimum": 0},
+            "dialog_frames": {"type": "integer", "minimum": 0},
+            "action_sync": {
+              "type": "object",
+              "required": ["stale", "dup", "missing"],
+              "properties": {
+                "stale": {"type": ["integer", "null"]},
+                "dup": {"type": ["integer", "null"]},
+                "missing": {"type": ["integer", "null"]},
+                "rejected": {"type": ["integer", "null"]},
+                "applied": {"type": ["integer", "null"]}
+              }
+            },
+            "counters_check": {
+              "type": "object",
+              "properties": {"consistent": {"type": ["boolean", "null"]}, "mismatches": {"type": "array", "items": {"type": "string"}}}
+            },
+            "rule_flags": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "evidence": {"type": "object"}
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": ["key", "policy", "condition", "seed_design", "counts", "rates", "comparison_class", "reproducibility"],
+      "properties": {
+        "key": {"type": "string"},
+        "policy": {"type": "object"},
+        "condition": {"type": "object", "description": "시나리오·빌드·shot_inverted·한도. 정책 비교는 condition_key가 같은 그룹끼리만 한다"},
+        "condition_key": {"type": "string"},
+        "seed_design": {"enum": ["uncontrolled", "single_seed", "fixed_seed_repeat", "multi_seed", "replay", "mixed"]},
+        "seed_info": {"type": "object"},
+        "comparison_class": {"enum": ["exploratory", "controlled"]},
+        "reproducibility": {"const": "not_verified"},
+        "same_seed_agreement": {"type": ["object", "null"]},
+        "counts": {
+          "type": "object",
+          "required": ["started", "by_status", "by_reason", "evaluable"],
+          "properties": {
+            "started": {"type": "integer", "minimum": 0},
+            "evaluable": {"type": "integer", "minimum": 0},
+            "by_status": {"type": "object"},
+            "by_reason": {"type": "object"},
+            "observation_complete": {"type": "integer"},
+            "observation_incomplete": {"type": "integer"}
+          }
+        },
+        "rates": {
+          "type": "object",
+          "properties": {
+            "survive_all": {"$ref": "#/$defs/rate"},
+            "survive_evaluable": {"$ref": "#/$defs/rate"},
+            "survive_evaluable_complete_obs": {"$ref": "#/$defs/rate"},
+            "survive_evaluable_incomplete_obs": {"$ref": "#/$defs/rate"},
+            "capture_all": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+            "capture_evaluable": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+            "clear_all": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+            "clear_evaluable": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]}
+          }
+        },
+        "metrics": {"type": "object"},
+        "caveats": {"type": "array", "items": {"type": "string"}},
+        "unsupported_items": {"type": "array", "items": {"type": "string"}},
+        "starts": {"type": "array", "items": {"type": "string"}, "description": "에피소드 started_at 정렬 목록(실행 순서 점검용)"}
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": ["ref", "event", "window", "tags"],
+      "properties": {
+        "ref": {"type": "object"},
+        "policy": {"type": ["string", "null"]},
+        "event": {"type": "object", "required": ["type", "frame"]},
+        "window": {
+          "type": "object",
+          "required": ["start_frame", "end_frame", "frames"],
+          "properties": {"start_frame": {"type": "integer"}, "end_frame": {"type": "integer"}, "frames": {"type": "integer"}}
+        },
+        "actions": {"type": "array", "items": {"type": "object"}},
+        "position": {"type": "object"},
+        "nearest_bullet": {"type": ["object", "null"]},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "object"}
+      }
+    }
+  },
+  "additionalProperties": true
+}

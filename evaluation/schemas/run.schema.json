@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "taisei-ai-run/1",
+  "title": "실행기가 쓰는 run 매니페스트 (artifacts/runs/<run_id>/run.json)",
+  "description": "ai-runner(#20) 실행 계약 v0.1 5절을 가정한 입력 형식이다. 실행 계약 v1이 올라오면 이 파일을 맞춘다.",
+  "type": "object",
+  "required": ["schema", "run_id", "experiment_id", "requested_episodes"],
+  "properties": {
+    "schema": {"const": "taisei-ai-run/1"},
+    "run_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$"},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "started_at": {"type": ["string", "null"]},
+    "ended_at": {"type": ["string", "null"]},
+    "exit_code": {"type": ["integer", "null"]},
+    "requested_episodes": {"type": "integer", "minimum": 0},
+    "command": {"type": ["array", "null"], "items": {"type": "string"}},
+    "code": {"$ref": "episode.schema.json#/$defs/code"},
+    "config": {"$ref": "episode.schema.json#/$defs/config"},
+    "browser": {"type": ["object", "null"]}
+  },
+  "additionalProperties": true
+}
