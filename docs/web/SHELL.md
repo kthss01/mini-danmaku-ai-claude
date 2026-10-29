@@ -14,6 +14,7 @@
 | `web/game/shell.js` | 환경 확인, 로더 로딩, Module 콜백, 입력·포커스 정책, 오류 처리 |
 | `web/game/shell-config.js` | 게임 산출물과의 연결 지점(파일 이름·팩터리 이름). 계약이 바뀌면 이 파일만 수정 |
 | `tests/web-shell/` | mock 로더와 검증용 사이트 구성 스크립트([README](../../tests/web-shell/README.md)) |
+| `web/game/ai-host.js` | AI 호스트 API `window.taiseiAI`(수동/AI 소유권 전환, 정책 구동, 상태·오류). AI 패널(`#ai-panel`)은 `shell.js`가 그린다. 설명은 [AI_SETUP.md](../AI_SETUP.md), QA는 [ai/QA.md](../ai/QA.md) |
 
 세션 1의 패키징 규칙([BUILD.md](BUILD.md), PR #11)대로 `web/`의 파일은 `build/web/site/` 루트로, `web/game/`의 파일은 `build/web/site/game/`으로 복사되어 `taisei.js`·`taisei.wasm`·`data/` 옆에 놓인다. 게임 셸이 `game/`에 있어야 하는 이유는 아래 "산출물 계약"의 `data/` 제약 때문이다. 모든 경로는 페이지 기준 상대 경로이므로 서빙 루트가 어느 하위 경로여도 동작한다. 업스트림 셸 `game/taisei.html`은 그대로 남지만 진입 URL은 `index.html`(→ `game/index.html`)이다.
 

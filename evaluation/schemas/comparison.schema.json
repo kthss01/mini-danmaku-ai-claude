@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "taisei-ai-comparison/1",
+  "title": "기준선 대 정책 비교 (comparison.json)",
+  "type": "object",
+  "required": ["schema", "tool", "baselines", "warnings", "buckets"],
+  "properties": {
+    "schema": {"const": "taisei-ai-comparison/1"},
+    "tool": {"type": "object"},
+    "baselines": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "buckets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["condition", "condition_key", "comparison_class", "policies", "deltas", "interleaving", "notes", "reproducibility"],
+        "properties": {
+          "condition": {"type": "object"},
+          "condition_key": {"type": "string"},
+          "comparison_class": {"enum": ["exploratory", "controlled"]},
+          "reproducibility": {"const": "not_verified"},
+          "policies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "seed_design", "started", "evaluable", "survive_all", "survive_evaluable"],
+              "properties": {"name": {"type": ["string", "null"]}, "started": {"type": "integer"}, "evaluable": {"type": "integer"}}
+            }
+          },
+          "deltas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["policy", "vs", "separation_all"],
+              "properties": {"separation_all": {"enum": ["higher_intervals_separate", "lower_intervals_separate", "intervals_overlap", null]}}
+            }
+          },
+          "interleaving": {"type": "object"},
+          "notes": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}
